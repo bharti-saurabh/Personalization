@@ -1,0 +1,305 @@
+import React, { useState } from 'react';
+import { useApp } from '../../context/AppContext';
+import {
+  ShoppingBag,
+  Sparkles,
+  Search,
+  User,
+  Heart,
+  SlidersHorizontal,
+  CheckCircle2,
+  Trophy,
+  Tag,
+  Zap,
+} from 'lucide-react';
+import { Department } from '../../types';
+
+export const Header: React.FC = () => {
+  const {
+    isPersonalizationOn,
+    togglePersonalization,
+    showMLPanel,
+    toggleMLPanel,
+    cart,
+    setStorefrontPage,
+    storefrontPage,
+    lastModelFeedback,
+    recordEvent,
+    products,
+    setSelectedProduct,
+    setNavigationTab,
+    setActiveDeptFilter,
+    setActiveTeamOverride,
+    activeTeamOverride,
+    topazPrediction,
+  } = useApp();
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
+
+  const filteredSearch = searchQuery.trim()
+    ? products.filter((p) =>
+        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.team.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.department.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : [];
+
+  const handleSelectSearchResult = (p: typeof products[0]) => {
+    setSelectedProduct(p);
+    setNavigationTab('experience');
+    setStorefrontPage('pdp');
+    setSearchQuery('');
+    setIsSearchOpen(false);
+    recordEvent(`Searched & Selected Product: ${p.name}`);
+  };
+
+  const handleCategoryClick = (dept?: Department, team?: string) => {
+    setNavigationTab('experience');
+    setStorefrontPage('plp');
+    setActiveDeptFilter(dept || null);
+    if (team) {
+      setActiveTeamOverride(team as any);
+    } else if (!dept) {
+      setActiveTeamOverride(null);
+    }
+  };
+
+  return (
+    <header className="sticky top-0 z-40 bg-slate-950 text-white shadow-md border-b border-slate-800">
+      {/* Top Promotional Announcement Ticker */}
+      <div className="bg-red-600 text-white px-4 py-1 text-[11px] font-bold uppercase tracking-wider flex justify-between items-center">
+        <div className="flex items-center space-x-2">
+          <Trophy className="h-3.5 w-3.5 text-amber-300" />
+          <span>⚡ FREE EXPRESS SHIPPING ON ORDERS OVER $45 WITH CODE: <b>PRO2026</b></span>
+        </div>
+        <div className="hidden md:flex items-center space-x-4 text-[10px] text-red-100 font-mono">
+          <span>OFFICIAL LICENSED SPORTS GEAR</span>
+          <span>•</span>
+          <span className="flex items-center gap-1">
+            <Zap className="h-3 w-3 text-amber-300" />
+            STRAIVE AI PERSONALIZATION DEMO
+          </span>
+        </div>
+      </div>
+
+      {/* Main Header Bar */}
+      <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between gap-4">
+        {/* Brand Logo & Title */}
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => {
+              setNavigationTab('experience');
+              setStorefrontPage('home');
+            }}
+            className="flex items-center space-x-2.5 group focus:outline-none text-left"
+          >
+            <div className="bg-red-600 text-white font-black px-3 py-1 rounded-lg tracking-tighter text-xl shadow-md group-hover:bg-red-500 transition-colors uppercase font-mono">
+              PROSPORTS
+            </div>
+            <div>
+              <div className="font-black text-sm tracking-tight text-white flex items-center gap-1.5 uppercase font-sans">
+                FAN HQ
+                <span className="bg-indigo-900/80 text-indigo-200 text-[10px] font-semibold px-2 py-0.5 rounded border border-indigo-700/60 font-mono">
+                  AI INTENT ENGINE
+                </span>
+              </div>
+              <div className="text-[10px] text-slate-400 font-medium hidden sm:block">
+                Predictive Merchandise Experience
+              </div>
+            </div>
+          </button>
+        </div>
+
+        {/* Global Search Bar */}
+        <div className="relative flex-1 max-w-md hidden md:block">
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search jerseys, hats, teams, players..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setIsSearchOpen(true);
+              }}
+              onFocus={() => setIsSearchOpen(true)}
+              className="w-full bg-slate-900 text-white pl-9 pr-4 py-1.5 rounded-lg text-xs border border-slate-700 focus:outline-none focus:border-red-500 focus:bg-slate-900 placeholder-slate-400 transition-all font-sans"
+            />
+          </div>
+
+          {/* Search Dropdown */}
+          {isSearchOpen && filteredSearch.length > 0 && (
+            <div className="absolute left-0 right-0 top-10 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-72 overflow-y-auto divide-y divide-slate-800 text-slate-100">
+              {filteredSearch.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => handleSelectSearchResult(p)}
+                  className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-slate-800 transition-colors group"
+                >
+                  <div>
+                    <div className="text-xs font-bold text-white group-hover:text-red-400">
+                      {p.name}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {p.team} • {p.department} • ${p.price}
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded font-mono font-bold">
+                    View
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Controls: Personalization & Explanation Layer */}
+        <div className="flex items-center space-x-2.5">
+          {/* Personalization ON / OFF Switch */}
+          <button
+            onClick={togglePersonalization}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+              isPersonalizationOn
+                ? 'bg-red-600 text-white border-red-500 shadow-sm'
+                : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+            }`}
+            title="Toggle Personalization Models"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Personalization: <b>{isPersonalizationOn ? 'ON' : 'OFF'}</b></span>
+          </button>
+
+          {/* Explanation Layer Toggle */}
+          <button
+            onClick={toggleMLPanel}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+              showMLPanel
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-white'
+            }`}
+            title="Toggle ML Explanation Layer"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5 text-indigo-300" />
+            <span className="hidden sm:inline">AI Explanation Layer</span>
+          </button>
+
+          {/* Cart Icon */}
+          <button
+            onClick={() => {
+              setNavigationTab('experience');
+              setStorefrontPage('cart');
+            }}
+            className="relative bg-red-600 hover:bg-red-500 text-white p-2 rounded-lg transition-colors flex items-center space-x-1.5 focus:outline-none shadow-sm"
+          >
+            <ShoppingBag className="h-4 w-4" />
+            <span className="font-bold text-xs">{cartCount}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* League & Category Navigation Bar */}
+      <div className="bg-slate-900 border-t border-slate-800/80 px-4 py-2">
+        <div className="max-w-7xl mx-auto flex items-center justify-between text-xs overflow-x-auto whitespace-nowrap scrollbar-none gap-6">
+          <div className="flex items-center space-x-5 text-slate-300 font-extrabold tracking-wide">
+            <button
+              onClick={() => handleCategoryClick()}
+              className="hover:text-red-400 transition-colors uppercase font-mono text-[11px] text-white bg-red-600/30 px-2.5 py-0.5 rounded border border-red-500/40"
+            >
+              ALL GEAR
+            </button>
+            <span className="text-slate-700">|</span>
+            <button
+              onClick={() => handleCategoryClick(undefined, 'Eagles')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              NFL
+            </button>
+            <button
+              onClick={() => handleCategoryClick(undefined, 'Yankees')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              MLB
+            </button>
+            <button
+              onClick={() => handleCategoryClick(undefined, 'Lakers')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              NBA
+            </button>
+            <button
+              onClick={() => handleCategoryClick(undefined, 'Rangers')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              NHL
+            </button>
+            <span className="text-slate-700">|</span>
+            <button
+              onClick={() => handleCategoryClick('Jerseys')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              Jerseys
+            </button>
+            <button
+              onClick={() => handleCategoryClick('Hats')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              Hats & Caps
+            </button>
+            <button
+              onClick={() => handleCategoryClick('Hoodies')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              Hoodies
+            </button>
+            <button
+              onClick={() => handleCategoryClick('T-shirts')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              T-Shirts
+            </button>
+            <button
+              onClick={() => handleCategoryClick('Collectibles')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              Collectibles
+            </button>
+            <button
+              onClick={() => handleCategoryClick('Accessories')}
+              className="hover:text-red-400 transition-colors uppercase text-[11px]"
+            >
+              Accessories
+            </button>
+          </div>
+
+          <div className="hidden lg:flex items-center space-x-3 text-[11px] font-semibold text-slate-400">
+            {isPersonalizationOn ? (
+              <span className="bg-emerald-950 text-emerald-300 border border-emerald-800/80 px-2.5 py-0.5 rounded font-mono text-[10px] flex items-center gap-1.5 shadow-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Predicted Favorite Team: <b>{activeTeamOverride || topazPrediction.teams[0]?.team}</b> ({Math.round(topazPrediction.teams[0]?.probability * 100)}%)
+              </span>
+            ) : (
+              <span className="bg-slate-800 text-slate-400 px-2.5 py-0.5 rounded font-mono text-[10px]">
+                Standard Catalog View
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Model Feedback Toast Banner */}
+      {lastModelFeedback && (
+        <div className="bg-indigo-950 text-indigo-200 px-4 py-1 text-xs border-t border-indigo-800 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="font-mono text-[11px] font-semibold">{lastModelFeedback}</span>
+          </div>
+          <span className="text-[10px] text-indigo-400 font-mono">Continuous ML Feedback Active</span>
+        </div>
+      )}
+    </header>
+  );
+};
+
