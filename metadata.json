@@ -1,6 +1,0 @@
-{
-  "name": "ProSports Commerce Personalization",
-  "description": "Interactive ML commerce personalization platform powered by Straive AI showcasing Intent Prediction, Vector Similarity, and Cross-Sell Complement engines.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

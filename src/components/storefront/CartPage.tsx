@@ -27,7 +27,7 @@ export const CartPage: React.FC = () => {
   const cartComplements = runComplementEngine(anchorProduct, products, 3);
 
   const handleAddCrossSell = (compProduct: typeof products[0]) => {
-    addToCart(compProduct, 'L', 'Complement Engine');
+    addToCart(compProduct, 'L', 'Cross-Sell Complement');
   };
 
   return (
