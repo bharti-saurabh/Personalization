@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview --port=3000",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "sim:inspect": "tsx scripts/inspect-dataset.ts",
+    "sim:eval": "tsx scripts/evaluate.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -24,6 +26,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.4",
     "tailwindcss": "^4.1.14",
+    "tsx": "^4.23.12",
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
   }

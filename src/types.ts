@@ -31,6 +31,16 @@ export interface Product {
   primaryColor: string;
   secondaryColor: string;
   jerseyNumber?: string;
+
+  // --- Fields added by the synthetic catalog generator (src/sim/catalog.ts) ---
+  /** Dense position in the catalog array; used as the row/column key in the co-occurrence graphs. */
+  index?: number;
+  /** Human-readable colorway, e.g. "Midnight Green". Part of the product text used for embedding. */
+  colorway?: string;
+  /** Size ladder appropriate to this department. */
+  sizes?: string[];
+  /** 0 = brand new release, 1 = long-standing catalog item. Feeds the cold-start narrative. */
+  releaseRecency?: number;
 }
 
 export type ScenarioId = 'returning_eagles' | 'multi_team' | 'anonymous' | 'hot_market' | 'low_confidence';
