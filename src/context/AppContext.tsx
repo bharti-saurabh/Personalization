@@ -13,8 +13,8 @@ import {
   DecisionTrace,
   TeamId,
 } from '../types';
-import { SCENARIOS } from '../data/scenarios';
-import { SYNTHETIC_PRODUCTS } from '../data/products';
+import { SCENARIOS, findAnchorProduct } from '../data/scenarios';
+import { getDataset } from '../sim/dataset';
 import {
   runIntentEngine,
   runSimilarityEngine,
@@ -76,11 +76,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [navigationTab, setNavigationTab] = useState<NavigationTab>('experience');
   const [storefrontPage, setStorefrontPage] = useState<StorefrontPage>('home');
 
-  const [products] = useState<Product[]>(SYNTHETIC_PRODUCTS);
-  const [selectedProduct, setSelectedProduct] = useState<Product>(SYNTHETIC_PRODUCTS[0]);
+  // The catalog and the trained-artefact stand-ins are built once, lazily, by
+  // the simulation layer. `useState` with an initialiser keeps that off the
+  // render path after the first mount.
+  const [products] = useState<Product[]>(() => getDataset().products);
+
+  /** The hero product the demo opens on: the most popular Jalen Hurts jersey. */
+  const openingProduct = React.useMemo(
+    () =>
+      findAnchorProduct({ team: 'Eagles', department: 'Jerseys', player: 'Jalen Hurts' }) ??
+      products[0],
+    [products]
+  );
+
+  const [selectedProduct, setSelectedProduct] = useState<Product>(openingProduct);
   const [cart, setCart] = useState<CartItem[]>([
     {
-      product: SYNTHETIC_PRODUCTS[0], // Jalen Hurts Jersey
+      product: openingProduct,
       quantity: 1,
       selectedSize: 'L',
     },
@@ -100,15 +112,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUserEvents(found.recentEvents);
       setActiveTeamOverride(null);
       setActiveDeptFilter(null);
-      // Pick representative product for scenario
+      // Anchor each scenario on a representative generated product, resolved by
+      // predicate rather than by id - catalog ids move with the generator seed.
       if (found.id === 'hot_market') {
-        const chiefsHat = products.find((p) => p.id === 'chiefs-hat-champions-cap') || products[0];
-        setSelectedProduct(chiefsHat);
+        setSelectedProduct(findAnchorProduct({ team: 'Chiefs', department: 'Hats' }) ?? openingProduct);
       } else if (found.id === 'anonymous') {
-        setSelectedProduct(products[0]);
+        setSelectedProduct(openingProduct);
         setStorefrontPage('pdp');
+      } else if (found.id === 'low_confidence') {
+        setSelectedProduct(findAnchorProduct({ team: 'Cowboys', department: 'Jerseys' }) ?? openingProduct);
       } else {
-        setSelectedProduct(products[0]);
+        setSelectedProduct(openingProduct);
       }
     }
   };
@@ -173,13 +187,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setShowMLPanel(!showMLPanel);
   };
 
-  // Live ML Engine calculations
-  const topazPrediction = runIntentEngine(selectedScenario, userEvents, activeTeamOverride);
-  const similarityMatches = runSimilarityEngine(selectedProduct, products, 4);
-  const complementMatches = runComplementEngine(selectedProduct, products, 4);
-  const activeDecisionTrace = generateDecisionTrace(
-    topazPrediction,
-    storefrontPage === 'home' ? 'Homepage Hero A-Spot & Team Widget' : storefrontPage === 'plp' ? 'Dynamic Filter Prioritization' : storefrontPage === 'pdp' ? 'Similarity & Cross-Sell Carousels' : 'Cart Cross-sell'
+  // Live ML engine calls. These are real computation now - a full cosine k-NN
+  // sweep of the catalog and a co-order lookup per candidate - so they are
+  // memoised on their actual inputs rather than re-run on every render.
+  const topazPrediction = React.useMemo(
+    () => runIntentEngine(selectedScenario, userEvents, activeTeamOverride),
+    [selectedScenario, userEvents, activeTeamOverride]
+  );
+
+  const similarityMatches = React.useMemo(
+    () => runSimilarityEngine(selectedProduct, products, 4),
+    [selectedProduct, products]
+  );
+
+  const complementMatches = React.useMemo(
+    () => runComplementEngine(selectedProduct, products, 4),
+    [selectedProduct, products]
+  );
+
+  const targetComponent =
+    storefrontPage === 'home'
+      ? 'Homepage Hero A-Spot & Team Widget'
+      : storefrontPage === 'plp'
+        ? 'Dynamic Filter Prioritization'
+        : storefrontPage === 'pdp'
+          ? 'Similarity & Cross-Sell Carousels'
+          : 'Cart Cross-sell';
+
+  const activeDecisionTrace = React.useMemo(
+    () => generateDecisionTrace(topazPrediction, targetComponent, products),
+    [topazPrediction, targetComponent, products]
   );
 
   return (

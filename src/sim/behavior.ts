@@ -30,8 +30,29 @@ import {
 } from './taxonomy';
 
 const BEHAVIOR_SEED = 'behavior-v1';
-const POPULATION_SIZE = 3200;
+
+/**
+ * Population size is set by what the *co-order graph* needs, not by what looks
+ * impressive. Item-to-item complement estimates are only meaningful with a few
+ * observations per pair, and pair counts grow far more slowly than order counts
+ * because baskets are small. At 3,200 shoppers essentially every product pair
+ * was a singleton, which would have forced every complement to back off to the
+ * department level. This size puts a usable fraction of the catalog on
+ * item-level evidence while keeping the one-off build under a second.
+ */
+const POPULATION_SIZE = 14000;
 const CO_VIEW_WINDOW = 3;
+
+/**
+ * Concentration exponent applied to popularity when choosing basket companions.
+ *
+ * Real co-purchase graphs are heavily head-weighted: a handful of bestsellers
+ * appear in a large share of baskets, so their pairs accumulate real support
+ * while the tail stays sparse. Sampling companions proportional to raw
+ * popularity spreads observations too evenly and produces a co-order graph made
+ * almost entirely of one-off pairs.
+ */
+const BASKET_CONCENTRATION = 2.2;
 
 export interface SimSession {
   focusTeam: TeamId;
@@ -214,7 +235,7 @@ function buildBasket(
 
     const pick = rng.pickWeighted(
       bucket,
-      bucket.map((i) => products[i].popularity)
+      bucket.map((i) => Math.pow(products[i].popularity, BASKET_CONCENTRATION))
     );
     if (!basket.includes(pick)) basket.push(pick);
   }
