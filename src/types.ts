@@ -143,6 +143,7 @@ export type NavigationTab =
   | 'experience'
   | 'journey'
   | 'model_intelligence'
+  | 'model_evidence'
   | 'lab'
   | 'business_impact'
   | 'architecture'

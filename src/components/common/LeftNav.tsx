@@ -6,6 +6,7 @@ import {
   UserCheck,
   BrainCircuit,
   TestTube2,
+  FlaskConical,
   TrendingUp,
   Workflow,
   Sparkles,
@@ -46,6 +47,12 @@ export const LeftNav: React.FC = () => {
           label: 'Model Intelligence',
           icon: <BrainCircuit className="h-4 w-4" />,
           badge: 'Engine',
+        },
+        {
+          id: 'model_evidence',
+          label: 'Model Evidence',
+          icon: <FlaskConical className="h-4 w-4" />,
+          badge: 'Offline',
         },
         {
           id: 'lab',

@@ -11,6 +11,7 @@ import { CartPage } from './components/storefront/CartPage';
 import { IntelligencePanel } from './components/intelligence/IntelligencePanel';
 import { CustomerJourneyScreen } from './components/intelligence/CustomerJourneyScreen';
 import { ModelIntelligence } from './components/intelligence/ModelIntelligence';
+import { ModelEvidence } from './components/intelligence/ModelEvidence';
 import { RecommendationLab } from './components/intelligence/RecommendationLab';
 import { BusinessImpactCalculator } from './components/intelligence/BusinessImpactCalculator';
 import { ModelArchitecture } from './components/intelligence/ModelArchitecture';
@@ -78,6 +79,12 @@ function MainContent() {
       {navigationTab === 'model_intelligence' && (
         <main className="flex-1 overflow-y-auto">
           <ModelIntelligence />
+        </main>
+      )}
+
+      {navigationTab === 'model_evidence' && (
+        <main className="flex-1 overflow-y-auto">
+          <ModelEvidence />
         </main>
       )}
 
