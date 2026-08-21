@@ -1,6 +1,6 @@
 import React from 'react';
 import { Product } from '../../types';
-import { Star, ShoppingBag, Eye, Sparkles, Truck } from 'lucide-react';
+import { Star, ShoppingBag, Sparkles, Truck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProductImage } from './ProductImage';
 
@@ -34,7 +34,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           />
 
           {/* Top Badges Row */}
-          <div className="flex justify-between items-start z-10 w-full gap-1">
+          {/* Wraps rather than clips: on a narrow grid "EAGLES" + "BEST SELLER"
+              cannot share a line, and a cut-off badge looks like a bug. */}
+          <div className="flex flex-wrap justify-between items-start z-10 w-full gap-1">
             <span className="bg-slate-950/90 backdrop-blur text-white font-extrabold text-[10px] px-2 py-0.5 rounded tracking-wide border border-slate-700/60 uppercase whitespace-nowrap shrink-0">
               {product.team}
             </span>
@@ -106,26 +108,28 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       </div>
 
       {/* Footer Price & Actions */}
-      <div className="p-3 pt-2 border-t border-slate-100 flex items-center justify-between mt-1 bg-slate-50/50">
-        <div>
+      {/* The controls are fixed-width and the price is not, so the price is the
+          side that gives: a discounted item shows two prices and would otherwise
+          push the ADD button off the edge of a narrow card. */}
+      <div className="p-3 pt-2 border-t border-slate-100 flex items-center justify-between gap-2 mt-1 bg-slate-50/50">
+        {/* Two prices stack rather than sit side by side: on a four-up grid the
+            was-price loses its last digits if the pair has to share a line with
+            the ADD button, and a truncated price reads as a rendering bug. */}
+        <div className="min-w-0">
           {product.salePrice ? (
-            <div className="flex items-baseline space-x-1.5">
-              <span className="text-sm font-black text-red-600">${product.salePrice.toFixed(2)}</span>
-              <span className="text-xs text-slate-400 line-through">${product.price.toFixed(2)}</span>
+            <div className="leading-tight">
+              <div className="text-[10px] text-slate-400 line-through whitespace-nowrap">${product.price.toFixed(2)}</div>
+              <div className="text-sm font-black text-red-600 whitespace-nowrap">${product.salePrice.toFixed(2)}</div>
             </div>
           ) : (
-            <span className="text-sm font-black text-slate-900">${product.price.toFixed(2)}</span>
+            <span className="text-sm font-black text-slate-900 whitespace-nowrap">${product.price.toFixed(2)}</span>
           )}
         </div>
 
-        <div className="flex items-center space-x-1">
-          <button
-            onClick={() => onSelect(product)}
-            className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded-lg transition-colors"
-            title="View Details"
-          >
-            <Eye className="h-4 w-4" />
-          </button>
+        {/* No separate "view details" control: the whole thumbnail above is
+            already that button, and dropping it buys the width a discounted
+            price needs. */}
+        <div className="flex items-center shrink-0">
           <button
             onClick={() => addToCart(product, 'L')}
             className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs px-2.5 py-1.5 rounded-md transition-colors flex items-center space-x-1 uppercase tracking-wider"
