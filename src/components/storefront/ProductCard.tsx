@@ -35,13 +35,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
           {/* Top Badges Row */}
           <div className="flex justify-between items-start z-10 w-full gap-1">
-            <span className="bg-slate-950/90 backdrop-blur text-white font-extrabold text-[10px] px-2 py-0.5 rounded tracking-wide border border-slate-700/60 uppercase">
+            <span className="bg-slate-950/90 backdrop-blur text-white font-extrabold text-[10px] px-2 py-0.5 rounded tracking-wide border border-slate-700/60 uppercase whitespace-nowrap shrink-0">
               {product.team}
             </span>
 
             {badgeText ? (
               <span
-                className={`text-[10px] font-extrabold px-2 py-0.5 rounded shadow-sm flex items-center gap-1 ${
+                className={`text-[10px] font-extrabold px-2 py-0.5 rounded shadow-sm flex items-center gap-1 whitespace-nowrap shrink-0 ${
                   badgeType === 'complement'
                     ? 'bg-amber-500 text-slate-950 font-mono'
                     : badgeType === 'similarity'
@@ -53,7 +53,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 {badgeText}
               </span>
             ) : product.badge ? (
-              <span className="bg-red-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded uppercase tracking-wider shadow-sm">
+              <span className="bg-red-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded uppercase tracking-wider shadow-sm whitespace-nowrap shrink-0">
                 {product.badge}
               </span>
             ) : (

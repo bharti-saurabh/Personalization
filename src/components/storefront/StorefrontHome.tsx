@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
 import { Sparkles, Trophy, ArrowRight, ShieldAlert, Check } from 'lucide-react';
 import { TeamId, Department } from '../../types';
+import { TEAM_IDS, TEAM_BY_ID, DEPARTMENT_IDS } from '../../sim/taxonomy';
 
 export const StorefrontHome: React.FC = () => {
   const {
@@ -23,11 +24,42 @@ export const StorefrontHome: React.FC = () => {
   const primaryTeam = isPersonalizationOn ? activeTeamOverride || topazPrediction.teams[0]?.team || 'Eagles' : 'All Teams';
   const primaryTeamProb = Math.round((topazPrediction.teams[0]?.probability || 0.7) * 100);
 
+  // --- The unpersonalized storefront ---------------------------------------
+  // These orderings have to be genuinely different from the model's, or the OFF
+  // state is just the ON state with the probability badges hidden - which is
+  // exactly what a sceptical audience will accuse a demo of doing. So each one
+  // is derived from something the model plays no part in:
+  //   teams       -> national market size, the same list for every visitor
+  //   departments -> alphabetical, the default any catalog falls back to
+  //   products    -> global bestsellers across all six clubs, not one team's
+  const popularTeams = useMemo(
+    () => [...TEAM_IDS].sort((a, b) => (TEAM_BY_ID[b]?.marketSize ?? 0) - (TEAM_BY_ID[a]?.marketSize ?? 0)),
+    []
+  );
+  const alphabeticalDepartments = useMemo(
+    () => [...DEPARTMENT_IDS].sort((a, b) => a.localeCompare(b)),
+    []
+  );
+  const globalBestSellers = useMemo(
+    () => [...products].sort((a, b) => b.popularity - a.popularity),
+    [products]
+  );
+
+  // Rows rendered by the team and department widgets. Personalized rows carry a
+  // probability; unpersonalized ones deliberately do not have one to carry.
+  const teamRows: { team: TeamId; probability: number | null }[] = isPersonalizationOn
+    ? topazPrediction.teams.map((t) => ({ team: t.team, probability: t.probability }))
+    : popularTeams.map((team) => ({ team, probability: null }));
+
+  const departmentRows: { department: Department; probability: number | null }[] = isPersonalizationOn
+    ? topazPrediction.departments.map((d) => ({ department: d.department, probability: d.probability }))
+    : alphabeticalDepartments.map((department) => ({ department, probability: null }));
+
   // Filter products by team or popularity
   const heroTeamProducts = products.filter((p) => p.team === primaryTeam);
   const personalizedCarouselProducts = isPersonalizationOn && heroTeamProducts.length >= 1
     ? heroTeamProducts
-    : products.slice(0, 6);
+    : globalBestSellers;
 
   const handleTeamClick = (team: TeamId) => {
     setActiveTeamOverride(team);
@@ -128,7 +160,7 @@ export const StorefrontHome: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-          {topazPrediction.teams.map((tItem, idx) => {
+          {teamRows.map((tItem, idx) => {
             const isSelected = activeTeamOverride ? activeTeamOverride === tItem.team : (idx === 0 && isPersonalizationOn);
             return (
               <button
@@ -143,14 +175,10 @@ export const StorefrontHome: React.FC = () => {
                 <div>
                   <span className="text-xs font-extrabold uppercase tracking-wider block">{tItem.team}</span>
                   <span className="text-[10px] opacity-70 block">
-                    {tItem.team === 'Eagles' || tItem.team === 'Cowboys' || tItem.team === 'Chiefs'
-                      ? 'NFL'
-                      : tItem.team === 'Phillies'
-                      ? 'MLB'
-                      : 'NBA'}
+                    {TEAM_BY_ID[tItem.team]?.league ?? ''}
                   </span>
                 </div>
-                {isPersonalizationOn && (
+                {tItem.probability !== null && (
                   <span
                     className={`text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded ${
                       isSelected ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-700'
@@ -174,7 +202,7 @@ export const StorefrontHome: React.FC = () => {
         </div>
 
         <div className="flex space-x-2 overflow-x-auto pb-1 scrollbar-none">
-          {topazPrediction.departments.map((deptItem, idx) => {
+          {departmentRows.map((deptItem, idx) => {
             const isDeptSelected = activeDeptFilter
               ? activeDeptFilter === deptItem.department
               : (idx === 0 && isPersonalizationOn);
@@ -193,7 +221,7 @@ export const StorefrontHome: React.FC = () => {
                 }`}
               >
                 <span>{deptItem.department}</span>
-                {isPersonalizationOn && (
+                {deptItem.probability !== null && (
                   <span className="text-[10px] opacity-80 font-mono">
                     ({Math.round(deptItem.probability * 100)}%)
                   </span>
