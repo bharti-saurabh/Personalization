@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Trash2, ShoppingBag, Plus, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
 import { runComplementEngine } from '../../ml/engine';
@@ -15,10 +15,25 @@ export const CartPage: React.FC = () => {
     recordEvent,
   } = useApp();
 
-  const subtotal = cart.reduce((acc, item) => {
-    const pPrice = item.product.salePrice || item.product.price;
-    return acc + pPrice * item.quantity;
-  }, 0);
+  // An inline confirmation rather than window.alert: a native dialog in the
+  // middle of a leadership demo reads as an unfinished prototype, and it also
+  // blocks the screenshot harness.
+  const [checkoutDone, setCheckoutDone] = useState(false);
+
+  const lineValue = (item: (typeof cart)[number]) =>
+    (item.product.salePrice || item.product.price) * item.quantity;
+
+  const subtotal = cart.reduce((acc, item) => acc + lineValue(item), 0);
+
+  // Attribution, not forecast. Every line the shopper added from a
+  // recommendation rail is tagged at the moment it enters the cart, so the
+  // incremental value below is a fact about this basket rather than an
+  // assumption about a population. It moves the instant a complement is
+  // accepted, which is the whole point of showing it here.
+  const recommendedItems = cart.filter((item) => item.addedByRecommendation);
+  const recommendedValue = recommendedItems.reduce((acc, item) => acc + lineValue(item), 0);
+  const organicValue = subtotal - recommendedValue;
+  const basketShare = subtotal > 0 ? recommendedValue / subtotal : 0;
 
   const shippingCost = subtotal > 75 || subtotal === 0 ? 0 : 7.99;
   const grandTotal = subtotal + shippingCost;
@@ -197,34 +212,64 @@ export const CartPage: React.FC = () => {
               </div>
             </div>
 
-            <button
-              onClick={() => {
-                alert('Demo Checkout Completed! Simulated order telemetry captured.');
-                clearCart();
-                recordEvent('Completed Checkout Event');
-              }}
-              disabled={cart.length === 0}
-              className="w-full bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white font-black py-3 rounded-xl text-xs uppercase tracking-wider shadow-md transition-transform active:scale-98"
-            >
-              PROCEED TO CHECKOUT
-            </button>
+            {checkoutDone ? (
+              <div className="w-full bg-emerald-50 border border-emerald-300 text-emerald-900 font-bold py-3 px-3 rounded-xl text-[11px] flex items-start gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-px" />
+                <span className="leading-snug">
+                  Simulated order placed. Checkout telemetry was written to the event stream and is
+                  visible in the Customer Journey tab.
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  recordEvent('Completed Checkout Event');
+                  clearCart();
+                  setCheckoutDone(true);
+                }}
+                disabled={cart.length === 0}
+                className="w-full bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white font-black py-3 rounded-xl text-xs uppercase tracking-wider shadow-md transition-transform active:scale-98"
+              >
+                PROCEED TO CHECKOUT
+              </button>
+            )}
 
-            {/* Simulated Impact Metrics Box */}
-            <div className="bg-indigo-50 border border-indigo-200 p-3 rounded-xl text-xs text-indigo-950 space-y-1">
-              <div className="font-bold text-indigo-900 flex items-center justify-between">
-                <span>Simulated Order Impact:</span>
-                <span className="font-mono text-[10px] text-indigo-700 font-bold">Real-time</span>
+            {/* Recommendation attribution for this basket. Measured from the
+                cart itself - no assumed lift, no session average. */}
+            <div className="bg-indigo-50 border border-indigo-200 p-3 rounded-xl text-xs text-indigo-950 space-y-1.5">
+              <div className="font-bold text-indigo-900 flex items-center justify-between gap-2">
+                <span>Recommendation Attribution</span>
+                <span className="font-mono text-[10px] text-indigo-700 font-bold shrink-0">This basket</span>
               </div>
               <div className="text-[11px] space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Current Cart Subtotal:</span>
-                  <span className="font-bold">${subtotal.toFixed(2)}</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-indigo-900/70">Shopper-initiated:</span>
+                  <span className="font-bold">${organicValue.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Incremental Recommendation Lift:</span>
-                  <span className="font-bold text-emerald-700">+$28.40 / session</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-indigo-900/70">
+                    Added from recommendations ({recommendedItems.length}):
+                  </span>
+                  <span className="font-bold text-emerald-700">
+                    {recommendedValue > 0 ? `+$${recommendedValue.toFixed(2)}` : '$0.00'}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 pt-1 border-t border-indigo-200">
+                  <span className="text-indigo-900/70">Share of basket value:</span>
+                  <span className="font-bold font-mono">{(basketShare * 100).toFixed(0)}%</span>
                 </div>
               </div>
+              {recommendedValue === 0 ? (
+                <div className="text-[10px] text-indigo-900/60 leading-snug pt-0.5">
+                  Nothing in this cart came from a recommendation yet. Accept one below and this
+                  block updates.
+                </div>
+              ) : (
+                <div className="text-[10px] text-indigo-900/60 leading-snug pt-0.5">
+                  Value the engines put in this basket, tagged at add-to-cart. Basket attribution -
+                  not a conversion-lift claim, which only an online A/B test can establish.
+                </div>
+              )}
             </div>
           </div>
         </div>
