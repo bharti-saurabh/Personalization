@@ -58,7 +58,7 @@ export const StraiveContribution: React.FC = () => {
             </li>
             <li className="flex items-start space-x-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-              <span>Real-time session feature engineering pipeline with sub-20ms inference latency.</span>
+              <span>Real-time session feature engineering pipeline, engineered to a sub-20ms inference budget.</span>
             </li>
           </ul>
         </div>

@@ -141,6 +141,7 @@ export interface DecisionTrace {
 
 export type NavigationTab = 
   | 'experience'
+  | 'comparison'
   | 'journey'
   | 'model_intelligence'
   | 'model_evidence'

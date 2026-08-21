@@ -22,6 +22,11 @@ import {
 } from 'recharts';
 
 export const BusinessImpactCalculator: React.FC = () => {
+  // Every one of these is an operator-entered assumption, not a measurement.
+  // Nothing on this screen is derived from the offline evaluation - the harness
+  // scores ranking quality, which is a different question from revenue. The
+  // defaults are placeholders chosen to make the sliders land in a plausible
+  // range; they are not this client's numbers and are not a forecast.
   const [annualSessions, setAnnualSessions] = useState<number>(50000000);
   const [coveragePct, setCoveragePct] = useState<number>(68);
   const [baselineConversion, setBaselineConversion] = useState<number>(2.8);
@@ -36,6 +41,10 @@ export const BusinessImpactCalculator: React.FC = () => {
   const newOrders = personalizedSessions * newConversionRate;
   const incrementalOrders = Math.round(newOrders - baselineOrders);
 
+  // An attached complement is assumed to add 12% of basket value on average -
+  // itself an assumption, and the one most worth replacing with a real figure
+  // from the client's own order data before this screen is shown as anything
+  // more than a shape.
   const newAov = baselineAov * (1 + (complementAttachRate / 100) * 0.12);
   const baselineRevenue = baselineOrders * baselineAov;
   const newRevenue = newOrders * newAov;
@@ -65,7 +74,7 @@ export const BusinessImpactCalculator: React.FC = () => {
         </div>
 
         <div className="bg-slate-800 p-2.5 rounded-xl border border-slate-700 text-xs text-slate-300">
-          <span className="text-emerald-400 font-extrabold block">Estimated Annual Revenue Lift</span>
+          <span className="text-emerald-400 font-extrabold block">Scenario Output · Your Assumptions</span>
           <span className="text-xl font-black text-white font-mono">
             +${(incrementalRevenue / 1000000).toFixed(2)}M / yr
           </span>
@@ -73,10 +82,14 @@ export const BusinessImpactCalculator: React.FC = () => {
       </div>
 
       {/* Disclaimer Label */}
-      <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs text-amber-900 flex items-center space-x-2">
-        <Info className="h-4 w-4 text-amber-600 shrink-0" />
-        <span>
-          <b>Directional scenario calculator for demonstration purposes.</b> Actual business impact requires controlled online A/B experimentation.
+      <div className="bg-amber-50 border border-amber-300 p-3.5 rounded-xl text-xs text-amber-900 flex items-start space-x-2.5">
+        <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+        <span className="leading-relaxed">
+          <b>This calculator measures nothing. It multiplies out the assumptions you set below.</b> The conversion lift
+          and attach rate are inputs, not findings - this prototype has no way to observe either, because ranking
+          quality and revenue are different questions. The offline evaluation on the Model Evidence tab does not feed
+          this screen and should not be cited as support for the figure above. A real number comes from a controlled
+          online A/B test on live traffic, and from nowhere else.
         </span>
       </div>
 
@@ -233,12 +246,12 @@ export const BusinessImpactCalculator: React.FC = () => {
         <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-xl border border-slate-800 space-y-5 flex flex-col justify-between">
           <div>
             <div className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider mb-2">
-              SIMULATED BUSINESS VALUE
+              SCENARIO OUTPUT · NOT A FORECAST
             </div>
             <h3 className="text-3xl font-black text-white font-mono leading-none">
               +${(incrementalRevenue / 1000000).toFixed(2)}M
             </h3>
-            <p className="text-xs text-slate-400 mt-1">Incremental Annual Revenue Impact</p>
+            <p className="text-xs text-slate-400 mt-1">Incremental annual revenue implied by the assumptions above</p>
 
             <div className="space-y-3 pt-4 border-t border-slate-800 mt-4 text-xs">
               <div className="flex justify-between">

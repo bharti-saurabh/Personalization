@@ -1,10 +1,41 @@
-import React, { useState } from 'react';
+/**
+ * Side-by-side audit of the personalised and unpersonalised storefront.
+ *
+ * The right-hand column reads from the live intent prediction rather than
+ * quoting fixed numbers, so it always agrees with what the storefront is
+ * actually rendering for the selected scenario. The funnel strip at the bottom
+ * is the one block on this screen with no measurement behind it, and it says so
+ * in its own header rather than in a footnote.
+ */
+
+import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { Sparkles, ArrowLeftRight, Check, X } from 'lucide-react';
+import { Sparkles, PencilRuler } from 'lucide-react';
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+/**
+ * Placeholder funnel shape for the "art of the possible" conversation. These
+ * are not outputs of this prototype and not benchmarks: the simulator has no
+ * click-through or conversion process to measure, and the offline evaluation
+ * scores ranking quality, which is a different question. They are here to show
+ * which metrics a real programme would move, at magnitudes a reader should
+ * argue with rather than accept.
+ */
+const ILLUSTRATIVE_FUNNEL = [
+  { label: 'Module CTR', value: '4.2% -> 8.9%' },
+  { label: 'PDP Views', value: '1.8 -> 3.4 / sess' },
+  { label: 'Add-to-Cart Rate', value: '8.4% -> 12.6%' },
+  { label: 'Conversion Rate', value: '2.8% -> 3.2%' },
+  { label: 'Units Per Order', value: '1.2 -> 1.6 units' },
+  { label: 'Average Order Value', value: '$88 -> $104' },
+];
 
 export const PersonalizationComparison: React.FC = () => {
   const { topazPrediction } = useApp();
-  const [sliderPos, setSliderPos] = useState<number>(50);
+
+  const [t1, t2, t3] = topazPrediction.teams;
+  const topDepts = topazPrediction.departments.slice(0, 4).map((d) => d.department);
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6 bg-slate-50 min-h-screen text-slate-900">
@@ -72,18 +103,23 @@ export const PersonalizationComparison: React.FC = () => {
             <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-950">
               <span className="font-bold text-emerald-800 block text-[10px] uppercase">Hero Banner</span>
               <span className="font-extrabold text-slate-900">
-                Eagles Season Hero (72% predicted intent)
+                {t1 ? `${t1.team} Season Hero (${pct(t1.probability)} predicted intent)` : 'Awaiting prediction'}
               </span>
             </div>
 
             <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-950">
               <span className="font-bold text-emerald-800 block text-[10px] uppercase">Team Widget Order</span>
-              <span className="font-extrabold text-slate-900">Eagles (72%) → 76ers (18%) → Phillies (6%)</span>
+              <span className="font-extrabold text-slate-900">
+                {[t1, t2, t3]
+                  .filter(Boolean)
+                  .map((t) => `${t.team} (${pct(t.probability)})`)
+                  .join(' → ')}
+              </span>
             </div>
 
             <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-950">
               <span className="font-bold text-emerald-800 block text-[10px] uppercase">Department Ordering</span>
-              <span className="font-extrabold text-slate-900">Jerseys → Hats → Hoodies → Collectibles</span>
+              <span className="font-extrabold text-slate-900">{topDepts.join(' → ')}</span>
             </div>
 
             <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-950">
@@ -94,51 +130,34 @@ export const PersonalizationComparison: React.FC = () => {
         </div>
       </div>
 
-      {/* Simulated Funnel Metrics */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-        <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-          <h3 className="text-base font-extrabold text-slate-900">Simulated Funnel Metrics</h3>
-          <span className="text-xs text-slate-500 font-mono italic">Illustrative impact simulation</span>
+      {/* Illustrative funnel - explicitly not a measurement */}
+      <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6 shadow-none space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+          <h3 className="text-base font-extrabold text-slate-500 flex items-center gap-2">
+            <PencilRuler className="h-4 w-4 text-slate-400" />
+            <span>Illustrative Funnel - Hypothetical, Not Measured</span>
+          </h3>
+          <span className="text-[11px] text-slate-500 font-mono">no measurement behind these figures</span>
         </div>
+
+        <p className="text-xs text-slate-600 leading-relaxed max-w-4xl">
+          These are placeholder magnitudes showing <b>which</b> metrics a personalisation programme moves, not what
+          this prototype achieved. The simulator has no click-through or checkout process to observe, and the offline
+          evaluation on the Model Evidence tab scores ranking quality, which is a different question from revenue. The
+          only way to fill this table with real numbers is a controlled online A/B test.
+        </p>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs text-center">
-          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-            <span className="text-slate-500 block text-[10px]">Module CTR</span>
-            <span className="text-base font-black text-slate-900">4.2% → 8.9%</span>
-            <span className="text-[10px] text-emerald-600 font-bold block">+111%</span>
-          </div>
-
-          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-            <span className="text-slate-500 block text-[10px]">PDP Views</span>
-            <span className="text-base font-black text-slate-900">1.8 → 3.4 / sess</span>
-            <span className="text-[10px] text-emerald-600 font-bold block">+88%</span>
-          </div>
-
-          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-            <span className="text-slate-500 block text-[10px]">Add-to-Cart Rate</span>
-            <span className="text-base font-black text-slate-900">8.4% → 12.6%</span>
-            <span className="text-[10px] text-emerald-600 font-bold block">+50%</span>
-          </div>
-
-          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-            <span className="text-slate-500 block text-[10px]">Conversion Rate</span>
-            <span className="text-base font-black text-slate-900">2.8% → 3.2%</span>
-            <span className="text-[10px] text-emerald-600 font-bold block">+14.2%</span>
-          </div>
-
-          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-            <span className="text-slate-500 block text-[10px]">Units Per Order</span>
-            <span className="text-base font-black text-slate-900">1.2 → 1.6 units</span>
-            <span className="text-[10px] text-emerald-600 font-bold block">+33%</span>
-          </div>
-
-          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-            <span className="text-slate-500 block text-[10px]">Average Order Value</span>
-            <span className="text-base font-black text-slate-900">$88 → $104</span>
-            <span className="text-[10px] text-emerald-600 font-bold block">+18.2%</span>
-          </div>
+          {ILLUSTRATIVE_FUNNEL.map((m) => (
+            <div key={m.label} className="bg-slate-50/70 p-3 rounded-xl border border-dashed border-slate-300">
+              <span className="text-slate-500 block text-[10px]">{m.label}</span>
+              <span className="text-sm font-bold text-slate-600 font-mono">{m.value}</span>
+              <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">hypothetical</span>
+            </div>
+          ))}
         </div>
       </div>
+
     </div>
   );
 };

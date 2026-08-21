@@ -1,5 +1,14 @@
+/**
+ * Reference architecture for a production deployment.
+ *
+ * This diagram is a proposal, not a description of what this prototype runs.
+ * The prototype executes entirely in the browser: there is no event stream, no
+ * feature store and no serving tier. The banner below the title says so, so a
+ * reader cannot mistake the topology for something already stood up.
+ */
+
 import React, { useState } from 'react';
-import { Workflow, Sparkles, Layers, Cpu, ArrowDown, Zap, Server, Activity } from 'lucide-react';
+import { Workflow, Sparkles, Layers, Cpu, ArrowDown, Zap, Server, Activity, Info } from 'lucide-react';
 
 export const ModelArchitecture: React.FC = () => {
   const [activeSimulation, setActiveSimulation] = useState<boolean>(true);
@@ -31,7 +40,7 @@ export const ModelArchitecture: React.FC = () => {
     },
     {
       title: '5. Serving & Decision Layer',
-      badge: '< 18ms Latency',
+      badge: 'Target < 20ms',
       color: 'border-emerald-200 bg-emerald-50/50 text-emerald-900',
       items: ['Vector Distance Search', 'Confidence Threshold Check', 'Inventory Availability Filter', 'Fallback Safety Rules'],
     },
@@ -72,6 +81,18 @@ export const ModelArchitecture: React.FC = () => {
           <Activity className="h-4 w-4 animate-spin" />
           <span>Simulation Mode: {activeSimulation ? 'ACTIVE' : 'PAUSED'}</span>
         </button>
+      </div>
+
+      {/* What this diagram is, and what it is not */}
+      <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3">
+        <Info className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+        <div className="text-xs text-amber-900 leading-relaxed">
+          <span className="font-extrabold uppercase tracking-wider block mb-1">Proposed topology, not deployed infrastructure</span>
+          This is the architecture a production build would target. The prototype you are clicking through runs the
+          whole pipeline in the browser against a synthetic population - there is no event stream, feature store or
+          serving tier behind it. Latency badges are design targets, not measurements; the one number here that is
+          genuinely measured is the per-request inference time shown on the storefront's explanation layer.
+        </div>
       </div>
 
       {/* Layer Pipeline Stack */}

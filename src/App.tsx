@@ -14,6 +14,7 @@ import { ModelIntelligence } from './components/intelligence/ModelIntelligence';
 import { ModelEvidence } from './components/intelligence/ModelEvidence';
 import { RecommendationLab } from './components/intelligence/RecommendationLab';
 import { BusinessImpactCalculator } from './components/intelligence/BusinessImpactCalculator';
+import { PersonalizationComparison } from './components/storefront/PersonalizationComparison';
 import { ModelArchitecture } from './components/intelligence/ModelArchitecture';
 import { StraiveContribution } from './components/intelligence/StraiveContribution';
 
@@ -73,6 +74,12 @@ function MainContent() {
       {navigationTab === 'journey' && (
         <main className="flex-1 overflow-y-auto">
           <CustomerJourneyScreen />
+        </main>
+      )}
+
+      {navigationTab === 'comparison' && (
+        <main className="flex-1 overflow-y-auto">
+          <PersonalizationComparison />
         </main>
       )}
 

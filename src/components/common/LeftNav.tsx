@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
+  Columns2,
 } from 'lucide-react';
 
 export const LeftNav: React.FC = () => {
@@ -31,6 +32,12 @@ export const LeftNav: React.FC = () => {
           label: 'Storefront Experience',
           icon: <Store className="h-4 w-4" />,
           badge: 'Live',
+        },
+        {
+          id: 'comparison',
+          label: 'ON vs OFF Comparison',
+          icon: <Columns2 className="h-4 w-4" />,
+          badge: 'A/B',
         },
         {
           id: 'journey',
