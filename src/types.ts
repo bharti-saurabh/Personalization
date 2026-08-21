@@ -21,6 +21,11 @@ export interface Product {
   rating: number;
   reviewCount: number;
   inventoryStatus: 'In Stock' | 'Low Stock' | 'Pre-Order';
+  /**
+   * Team gradient class from the catalog feed. Retained because a real
+   * merchandising feed carries an image reference, but the storefront no longer
+   * renders it: product visuals are drawn procedurally by ProductImage.tsx.
+   */
   imageBg: string;
   badge?: string;
   styleFamily: string;

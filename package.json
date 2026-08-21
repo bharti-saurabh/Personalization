@@ -10,7 +10,8 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "sim:inspect": "tsx scripts/inspect-dataset.ts",
-    "sim:eval": "tsx scripts/evaluate.ts"
+    "sim:eval": "tsx scripts/evaluate.ts",
+    "sim:imagery": "tsx scripts/render-imagery.tsx"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

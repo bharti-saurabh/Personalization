@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
+import { ProductImage } from './ProductImage';
 import {
   Star,
   ShoppingBag,
@@ -109,10 +110,13 @@ export const ProductDetailPage: React.FC = () => {
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Left Column: Product Visual Banner */}
           <div className="space-y-4">
-            <div
-              className={`relative h-96 rounded-xl bg-gradient-to-br ${selectedProduct.imageBg} p-8 flex flex-col justify-between text-white shadow-inner overflow-hidden`}
-            >
-              <div className="flex justify-between items-start z-10">
+            <div className="relative h-96 rounded-xl p-5 border border-slate-200 overflow-hidden">
+              {/* Procedurally drawn merchandise render - see ProductImage.tsx */}
+              <ProductImage
+                product={selectedProduct}
+                className="absolute inset-0 h-full w-full"
+              />
+              <div className="relative flex justify-between items-start z-10">
                 <span className="bg-slate-900/90 text-white font-extrabold text-xs px-3 py-1 rounded-full uppercase tracking-wider border border-slate-700">
                   {selectedProduct.league} • {selectedProduct.team}
                 </span>
@@ -120,23 +124,27 @@ export const ProductDetailPage: React.FC = () => {
                   {selectedProduct.inventoryStatus}
                 </span>
               </div>
+            </div>
 
-              {/* Central Silhouette & Jersey # */}
-              <div className="self-center text-center my-auto z-10">
-                <div className="inline-block p-6 rounded-full bg-white/10 backdrop-blur border border-white/20 text-white font-black text-5xl tracking-tighter shadow-2xl mb-2">
-                  {selectedProduct.jerseyNumber
-                    ? `#${selectedProduct.jerseyNumber}`
-                    : selectedProduct.department.substring(0, 3).toUpperCase()}
+            {/* Caption strip. Kept below the image rather than overlaid on it -
+                the garment is drawn to fill the frame, so an overlay landed on
+                the hem. */}
+            <div className="flex items-baseline justify-between gap-3 px-1">
+              <div>
+                <div className="text-sm font-extrabold uppercase tracking-widest text-slate-700">
+                  {/* Style families that already carry the brand would otherwise
+                      read "Nike • Nike Vapor F.U.S.E." */}
+                  {selectedProduct.styleFamily.startsWith(selectedProduct.brand)
+                    ? selectedProduct.styleFamily
+                    : `${selectedProduct.brand} • ${selectedProduct.styleFamily}`}
                 </div>
-                <div className="text-sm font-extrabold uppercase tracking-widest text-slate-200">
-                  {selectedProduct.brand} • {selectedProduct.styleFamily}
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mt-0.5">
+                  {selectedProduct.colorway} • {selectedProduct.gender}
                 </div>
               </div>
-
-              <div className="flex justify-between items-center z-10 text-xs text-white/80 font-semibold">
-                <span>Authentic Licensed Merchandise</span>
-                <span>Gender: {selectedProduct.gender}</span>
-              </div>
+              <span className="text-[11px] text-slate-400 font-semibold whitespace-nowrap">
+                Authentic Licensed Merchandise
+              </span>
             </div>
           </div>
 

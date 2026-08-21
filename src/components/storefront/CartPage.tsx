@@ -2,6 +2,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { Trash2, ShoppingBag, Plus, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
 import { runComplementEngine } from '../../ml/engine';
+import { ProductImage } from './ProductImage';
 
 export const CartPage: React.FC = () => {
   const {
@@ -77,11 +78,11 @@ export const CartPage: React.FC = () => {
                   <div key={`${p.id}-${item.selectedSize}`} className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
                     <div className="flex items-center space-x-4">
                       {/* Product Visual Box */}
-                      <div
-                        className={`w-20 h-20 rounded-xl bg-gradient-to-br ${p.imageBg} flex items-center justify-center text-white font-black text-sm shrink-0 shadow-xs`}
-                      >
-                        {p.jerseyNumber ? `#${p.jerseyNumber}` : p.department.substring(0, 3).toUpperCase()}
-                      </div>
+                      <ProductImage
+                        product={p}
+                        detail={false}
+                        className="w-20 h-20 rounded-xl shrink-0 shadow-xs"
+                      />
 
                       <div>
                         <div className="text-[10px] font-extrabold text-red-600 uppercase tracking-wider">

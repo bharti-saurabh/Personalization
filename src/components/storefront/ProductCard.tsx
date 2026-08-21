@@ -2,6 +2,7 @@ import React from 'react';
 import { Product } from '../../types';
 import { Star, ShoppingBag, Eye, Sparkles, Truck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { ProductImage } from './ProductImage';
 
 interface ProductCardProps {
   product: Product;
@@ -24,10 +25,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         {/* Merchandise Visual Thumbnail */}
         <div
           onClick={() => onSelect(product)}
-          className={`relative h-48 bg-gradient-to-br ${product.imageBg} p-3.5 flex flex-col justify-between cursor-pointer overflow-hidden`}
+          className="relative h-48 p-3.5 flex flex-col justify-between cursor-pointer overflow-hidden"
         >
-          {/* Subtle Graphic Texture Overlay */}
-          <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:12px_12px]" />
+          {/* Procedurally drawn merchandise render - see ProductImage.tsx */}
+          <ProductImage
+            product={product}
+            className="absolute inset-0 h-full w-full transition-transform duration-300 group-hover:scale-105"
+          />
 
           {/* Top Badges Row */}
           <div className="flex justify-between items-start z-10 w-full gap-1">
@@ -59,22 +63,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             )}
           </div>
 
-          {/* Center Graphic Number / Logo */}
-          <div className="self-center my-auto z-10 text-center transform group-hover:scale-105 transition-transform duration-300">
-            <div className="inline-block px-3.5 py-2 rounded-xl bg-slate-950/40 backdrop-blur border border-white/20 text-white font-black text-2xl tracking-tight shadow-2xl">
-              {product.jerseyNumber ? `#${product.jerseyNumber}` : product.department.substring(0, 3).toUpperCase()}
-            </div>
-            <div className="text-[10px] font-extrabold text-white/90 mt-1 uppercase tracking-widest drop-shadow">
-              {product.brand} • {product.department}
-            </div>
-          </div>
-
           {/* Bottom Stock Badge */}
-          <div className="flex justify-between items-center z-10 text-[10px] text-white/90 font-medium">
-            <span className="bg-black/50 px-1.5 py-0.5 rounded text-[10px] font-semibold">
+          <div className="flex justify-between items-center z-10 text-[10px] font-medium">
+            <span className="bg-white/85 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-slate-300/70">
               {product.gender}
             </span>
-            <span className="bg-emerald-950/90 text-emerald-300 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold border border-emerald-700/50">
+            <span className="bg-emerald-50/95 text-emerald-800 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold border border-emerald-600/40">
               {product.inventoryStatus}
             </span>
           </div>
