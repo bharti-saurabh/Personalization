@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/common/Header';
 import { LeftNav } from './components/common/LeftNav';
@@ -9,14 +9,41 @@ import { ProductListingPage } from './components/storefront/ProductListingPage';
 import { ProductDetailPage } from './components/storefront/ProductDetailPage';
 import { CartPage } from './components/storefront/CartPage';
 import { IntelligencePanel } from './components/intelligence/IntelligencePanel';
-import { CustomerJourneyScreen } from './components/intelligence/CustomerJourneyScreen';
-import { ModelIntelligence } from './components/intelligence/ModelIntelligence';
-import { ModelEvidence } from './components/intelligence/ModelEvidence';
-import { RecommendationLab } from './components/intelligence/RecommendationLab';
-import { BusinessImpactCalculator } from './components/intelligence/BusinessImpactCalculator';
-import { PersonalizationComparison } from './components/storefront/PersonalizationComparison';
-import { ModelArchitecture } from './components/intelligence/ModelArchitecture';
-import { StraiveContribution } from './components/intelligence/StraiveContribution';
+
+// The storefront is what the demo opens on and it draws no charts. Everything
+// behind the other nav tabs is lazy so Recharts - by itself half the bundle -
+// stays off the first-paint path and loads when a tab is actually opened.
+const CustomerJourneyScreen = lazy(() =>
+  import('./components/intelligence/CustomerJourneyScreen').then((m) => ({ default: m.CustomerJourneyScreen }))
+);
+const ModelIntelligence = lazy(() =>
+  import('./components/intelligence/ModelIntelligence').then((m) => ({ default: m.ModelIntelligence }))
+);
+const ModelEvidence = lazy(() =>
+  import('./components/intelligence/ModelEvidence').then((m) => ({ default: m.ModelEvidence }))
+);
+const RecommendationLab = lazy(() =>
+  import('./components/intelligence/RecommendationLab').then((m) => ({ default: m.RecommendationLab }))
+);
+const BusinessImpactCalculator = lazy(() =>
+  import('./components/intelligence/BusinessImpactCalculator').then((m) => ({ default: m.BusinessImpactCalculator }))
+);
+const PersonalizationComparison = lazy(() =>
+  import('./components/storefront/PersonalizationComparison').then((m) => ({ default: m.PersonalizationComparison }))
+);
+const ModelArchitecture = lazy(() =>
+  import('./components/intelligence/ModelArchitecture').then((m) => ({ default: m.ModelArchitecture }))
+);
+const StraiveContribution = lazy(() =>
+  import('./components/intelligence/StraiveContribution').then((m) => ({ default: m.StraiveContribution }))
+);
+
+/** Brief hold while a lazy tab chunk arrives. */
+const TabFallback: React.FC = () => (
+  <div className="flex-1 flex items-center justify-center bg-slate-50 text-xs text-slate-500 font-mono">
+    Loading module...
+  </div>
+);
 
 function MainContent() {
   const { navigationTab, storefrontPage, showMLPanel, toggleMLPanel } = useApp();
@@ -70,7 +97,8 @@ function MainContent() {
         </div>
       )}
 
-      {/* Other Navigation Screens */}
+      {/* Other Navigation Screens - all lazily loaded */}
+      <Suspense fallback={navigationTab === 'experience' ? null : <TabFallback />}>
       {navigationTab === 'journey' && (
         <main className="flex-1 overflow-y-auto">
           <CustomerJourneyScreen />
@@ -118,6 +146,7 @@ function MainContent() {
           <StraiveContribution />
         </main>
       )}
+      </Suspense>
     </div>
   );
 }

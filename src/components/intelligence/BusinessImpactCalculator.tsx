@@ -283,7 +283,9 @@ export const BusinessImpactCalculator: React.FC = () => {
                   contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '11px' }}
                   formatter={(value: any) => [`$${value}M Revenue`, 'Revenue']}
                 />
-                <Bar dataKey="revenue" radius={[6, 6, 0, 0]}>
+                {/* Animation off: the grow-in leaves the bars unpainted in a
+                    headless capture, and it adds nothing to a two-bar chart. */}
+                <Bar dataKey="revenue" radius={[6, 6, 0, 0]} isAnimationActive={false}>
                   <Cell fill="#334155" />
                   <Cell fill="#10b981" />
                 </Bar>
