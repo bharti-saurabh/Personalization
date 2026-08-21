@@ -207,9 +207,21 @@ export function predictIntent(
   // Evidence enters as a share of the total, bounded by EVIDENCE_SCALE, so the
   // logits stay on the same scale as the log-prior no matter how long the
   // shopper's history is. See the constant's comment for why this matters.
+  //
+  // The share alone is not enough, though. A share is a purity measure: one
+  // click on a Cowboys jersey is 100% Cowboys, and so is a hundred of them.
+  // Left unscaled, the model leaps to a 99% call on its first observation,
+  // which is both wrong and the single most obvious tell that a demo is not
+  // running a real model. So the share is damped by the same sufficiency term
+  // that already gates confidence - `1 - exp(-evidence / K)` - which starts
+  // near zero and approaches one as evidence accumulates. The distribution and
+  // the confidence number then move together instead of disagreeing.
+  const sufficiency = 1 - Math.exp(-effectiveEvidence / SUFFICIENCY_K);
+  const evidenceScale = EVIDENCE_SCALE * sufficiency;
+
   const teamEvidenceTotal = TEAM_IDS.reduce((sum, t) => sum + teamEvidence[t], 0);
   const teamShare = (t: TeamId) =>
-    teamEvidenceTotal > 0 ? (teamEvidence[t] / teamEvidenceTotal) * EVIDENCE_SCALE : 0;
+    teamEvidenceTotal > 0 ? (teamEvidence[t] / teamEvidenceTotal) * evidenceScale : 0;
 
   const teamLogitsRaw = TEAM_IDS.map((team) => ({
     team,
@@ -232,7 +244,7 @@ export function predictIntent(
   const deptLogits = DEPARTMENT_IDS.map(
     (d) =>
       deptPriorTerm[d] +
-      (deptEvidenceTotal > 0 ? (deptEvidence[d] / deptEvidenceTotal) * EVIDENCE_SCALE : 0)
+      (deptEvidenceTotal > 0 ? (deptEvidence[d] / deptEvidenceTotal) * evidenceScale : 0)
   );
   const deptProbs = softmax(deptLogits, TEMPERATURE);
   const departments = DEPARTMENT_IDS.map((department, i) => ({
@@ -242,15 +254,27 @@ export function predictIntent(
 
   // --- 4. Confidence: entropy discounted by evidence sufficiency ------------
   const entropy = normalisedEntropy(teamProbs);
-  const sufficiency = 1 - Math.exp(-effectiveEvidence / SUFFICIENCY_K);
-  const confidence = Math.max(0.02, Math.min(0.99, (1 - entropy) * sufficiency));
+
+  // Confidence is the probability mass on the predicted team, discounted by how
+  // much evidence produced it. Both halves matter: a 90% call from one click is
+  // not the same claim as a 90% call from a decade of orders, and only the
+  // second should be allowed to reshape the storefront.
+  //
+  // This deliberately reads the top of the distribution rather than its entropy.
+  // Entropy answers "is this shopper focused overall", which is a different -
+  // and for an activation gate, wrong - question: a shopper split cleanly
+  // between two clubs has high entropy but the leading call may still be sound
+  // enough to merchandise against. Entropy is kept below to explain a
+  // low-confidence result, where naming the spread is genuinely informative.
+  const topProbability = teamProbs.length > 0 ? Math.max(...teamProbs) : 0;
+  const confidence = Math.max(0.02, Math.min(0.99, topProbability * sufficiency));
 
   const isFallback = confidence < CONFIDENCE_THRESHOLD;
   let fallbackReason: string | undefined;
   if (isFallback) {
     // Confidence is the product of two terms, so the honest explanation names
     // whichever one is actually binding rather than guessing at a narrative.
-    const certaintyTerm = 1 - entropy;
+    const certaintyTerm = topProbability;
     const belowThreshold = `Confidence ${(confidence * 100).toFixed(0)}% is below the ${CONFIDENCE_THRESHOLD * 100}% activation threshold.`;
 
     if (isAnonymous && effectiveEvidence < 1.5) {
