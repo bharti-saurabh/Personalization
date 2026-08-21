@@ -43,7 +43,12 @@ Other scripts:
 | `npm run sim:inspect` | Dumps catalog and population statistics for sanity-checking the simulator |
 | `npm run sim:imagery` | Renders the procedural product artwork |
 | `npm run lint` | `tsc --noEmit` |
-| `npm run build` | Production build |
+| `npm run build` | Production build (code-split, for a static host) |
+| `npm run build:single` | One self-contained HTML file in `dist-single/` - runs from `file://`, no server |
+
+`build:single` is the one to use for handing the demo to someone: it produces a single
+~0.9 MB HTML file with the JS, CSS and all imagery inlined. Double-clicking it opens the
+full prototype with no install and no network.
 
 ## The six demo moments
 

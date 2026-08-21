@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "sim:inspect": "tsx scripts/inspect-dataset.ts",
     "sim:eval": "tsx scripts/evaluate.ts",
-    "sim:imagery": "tsx scripts/render-imagery.tsx"
+    "sim:imagery": "tsx scripts/render-imagery.tsx",
+    "build:single": "node scripts/build-singlefile.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
