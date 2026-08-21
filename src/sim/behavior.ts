@@ -74,8 +74,22 @@ export interface SyntheticCustomer {
   loyalty: number;
   /** Observable history the engines may consume. */
   sessions: SimSession[];
-  /** HELD OUT - the next basket, used only for evaluation. */
-  heldOut: { team: TeamId; department: Department; productIndex: number } | null;
+  /**
+   * HELD OUT - the shopper's next purchasing session.
+   *
+   * Quarantined: it is excluded from `sessions`, contributes nothing to the
+   * co-occurrence graphs, and no engine imports it. The evaluation harness is
+   * its only consumer. `basket` and `viewed` are retained because the
+   * complement and similarity evaluations need the whole session, not just its
+   * anchor label.
+   */
+  heldOut: {
+    team: TeamId;
+    department: Department;
+    productIndex: number;
+    basket: number[];
+    viewed: number[];
+  } | null;
 }
 
 /** Sparse symmetric co-occurrence counts, keyed by product index. */
@@ -351,6 +365,8 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
         team: products[anchorIdx].team,
         department: products[anchorIdx].department,
         productIndex: anchorIdx,
+        basket: held.ordered,
+        viewed: held.viewed,
       };
       customer.sessions = allSessions.slice(0, heldOutSessionIdx);
     } else {

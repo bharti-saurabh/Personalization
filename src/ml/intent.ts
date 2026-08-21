@@ -46,8 +46,40 @@ import {
 
 /** Exponential decay constant over event age. ~0.35 gives a half-life of 2 events. */
 const RECENCY_LAMBDA = 0.35;
+
+/**
+ * Departments decay far more slowly than teams, because they are a different
+ * kind of preference.
+ *
+ * Which club is front of mind is volatile - it swings with the fixture list, a
+ * result, a campaign email - so the last few clicks really are the best guide.
+ * What a shopper *buys* is a stable trait: a jersey buyer stays a jersey buyer
+ * across visits. Applying the team decay to departments throws away most of the
+ * history that carries the signal, and the offline harness catches it: at the
+ * team rate, department prediction scored below a plain popularity baseline.
+ */
+const DEPT_RECENCY_LAMBDA = 0.08;
 /** Softmax temperature. Below 1 sharpens the distribution, above 1 flattens it. */
 const TEMPERATURE = 0.62;
+
+/**
+ * Maximum contribution the observed evidence may make to a logit, in log units.
+ *
+ * Evidence enters as each candidate's *share* of the total observed weight
+ * rather than as a raw sum. Without this the logit grows without bound in the
+ * length of the shopper's history: someone with forty events gets a distribution
+ * pinned at ~100% on one option, which destroys the ordering of everything
+ * below rank 1, while someone with three events gets a sensible spread. The
+ * offline harness caught exactly that - department prediction beat the
+ * popularity baseline at rank 1 but lost to it at rank 3, because ranks 2 and 3
+ * had saturated to noise.
+ *
+ * Normalising also keeps the two components of confidence independent, which is
+ * what they should be: the softmax measures how *concentrated* the preference
+ * is, and the sufficiency term separately measures how *much* evidence there
+ * was. Summing raw weights conflated the two.
+ */
+const EVIDENCE_SCALE = 3.5;
 /**
  * Evidence needed before the model is willing to be confident at all.
  *
@@ -149,16 +181,18 @@ export function predictIntent(
   const eventWeights: IntentTrace['eventWeights'] = [];
 
   userEvents.forEach((event, ageRank) => {
-    const decay = Math.exp(-RECENCY_LAMBDA * ageRank);
     const typeWeight = EVENT_WEIGHTS[event.pageType] ?? 0.5;
-    const weight = decay * typeWeight;
+    const weight = Math.exp(-RECENCY_LAMBDA * ageRank) * typeWeight;
+    const deptWeight = Math.exp(-DEPT_RECENCY_LAMBDA * ageRank) * typeWeight;
 
+    // The trace reports the team weight, which is what drives the headline
+    // team distribution shown in the intelligence panel.
     eventWeights.push({ event, weight, ageRank });
     effectiveEvidence += weight;
 
     if (event.team && teamEvidence[event.team] !== undefined) teamEvidence[event.team] += weight;
     if (event.department && deptEvidence[event.department] !== undefined) {
-      deptEvidence[event.department] += weight;
+      deptEvidence[event.department] += deptWeight;
     }
   });
 
@@ -170,11 +204,18 @@ export function predictIntent(
   }
 
   // --- 3. Logits and softmax ------------------------------------------------
+  // Evidence enters as a share of the total, bounded by EVIDENCE_SCALE, so the
+  // logits stay on the same scale as the log-prior no matter how long the
+  // shopper's history is. See the constant's comment for why this matters.
+  const teamEvidenceTotal = TEAM_IDS.reduce((sum, t) => sum + teamEvidence[t], 0);
+  const teamShare = (t: TeamId) =>
+    teamEvidenceTotal > 0 ? (teamEvidence[t] / teamEvidenceTotal) * EVIDENCE_SCALE : 0;
+
   const teamLogitsRaw = TEAM_IDS.map((team) => ({
     team,
     priorTerm: teamPriorTerm[team],
-    evidenceTerm: teamEvidence[team],
-    logit: teamPriorTerm[team] + teamEvidence[team],
+    evidenceTerm: teamShare(team),
+    logit: teamPriorTerm[team] + teamShare(team),
   }));
 
   const teamProbs = softmax(
@@ -187,7 +228,12 @@ export function predictIntent(
     probability: Number(teamProbs[i].toFixed(3)),
   })).sort((a, b) => b.probability - a.probability);
 
-  const deptLogits = DEPARTMENT_IDS.map((d) => deptPriorTerm[d] + deptEvidence[d]);
+  const deptEvidenceTotal = DEPARTMENT_IDS.reduce((sum, d) => sum + deptEvidence[d], 0);
+  const deptLogits = DEPARTMENT_IDS.map(
+    (d) =>
+      deptPriorTerm[d] +
+      (deptEvidenceTotal > 0 ? (deptEvidence[d] / deptEvidenceTotal) * EVIDENCE_SCALE : 0)
+  );
   const deptProbs = softmax(deptLogits, TEMPERATURE);
   const departments = DEPARTMENT_IDS.map((department, i) => ({
     department,
