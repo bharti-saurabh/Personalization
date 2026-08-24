@@ -32,10 +32,10 @@ const ILLUSTRATIVE_FUNNEL = [
 ];
 
 export const PersonalizationComparison: React.FC = () => {
-  const { topazPrediction } = useApp();
+  const { intentPrediction } = useApp();
 
-  const [t1, t2, t3] = topazPrediction.teams;
-  const topDepts = topazPrediction.departments.slice(0, 4).map((d) => d.department);
+  const [t1, t2, t3] = intentPrediction.teams;
+  const topDepts = intentPrediction.departments.slice(0, 4).map((d) => d.department);
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6 bg-slate-50 min-h-screen text-slate-900">

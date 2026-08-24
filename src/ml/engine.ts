@@ -121,8 +121,6 @@ export function generateDecisionTrace(
 }
 
 // Backwards-compatible aliases retained for existing imports.
-export const runTopazEngine = runIntentEngine;
-export const runKeplerSimilarity = runSimilarityEngine;
-export const runKeplerComplement = runComplementEngine;
+
 
 export type { SimilarityMatch, ComplementMatch, IntentPrediction };

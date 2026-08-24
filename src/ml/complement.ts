@@ -331,7 +331,7 @@ export function retrieveComplements(
 }
 
 /**
- * Directional pair inspection, used by the Kepler Complement visualisation to
+ * Directional pair inspection, used by the complement visualisation to
  * show that P(b|a) and P(a|b) genuinely differ.
  */
 export function inspectDirectionality(

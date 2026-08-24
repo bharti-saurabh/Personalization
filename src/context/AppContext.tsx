@@ -57,7 +57,7 @@ interface AppContextType {
   lastModelFeedback: string | null;
 
   // Live ML Engine Outputs
-  topazPrediction: IntentPrediction;
+  intentPrediction: IntentPrediction;
   similarityMatches: SimilarityMatch[];
   complementMatches: ComplementMatch[];
   activeDecisionTrace: DecisionTrace;
@@ -190,7 +190,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Live ML engine calls. These are real computation now - a full cosine k-NN
   // sweep of the catalog and a co-order lookup per candidate - so they are
   // memoised on their actual inputs rather than re-run on every render.
-  const topazPrediction = React.useMemo(
+  const intentPrediction = React.useMemo(
     () => runIntentEngine(selectedScenario, userEvents, activeTeamOverride),
     [selectedScenario, userEvents, activeTeamOverride]
   );
@@ -215,8 +215,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : 'Cart Cross-sell';
 
   const activeDecisionTrace = React.useMemo(
-    () => generateDecisionTrace(topazPrediction, targetComponent, products),
-    [topazPrediction, targetComponent, products]
+    () => generateDecisionTrace(intentPrediction, targetComponent, products),
+    [intentPrediction, targetComponent, products]
   );
 
   return (
@@ -247,7 +247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeDeptFilter,
         setActiveDeptFilter,
         lastModelFeedback,
-        topazPrediction,
+        intentPrediction,
         similarityMatches,
         complementMatches,
         activeDecisionTrace,

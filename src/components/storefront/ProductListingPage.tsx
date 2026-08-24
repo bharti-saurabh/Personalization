@@ -8,7 +8,7 @@ export const ProductListingPage: React.FC = () => {
   const {
     products,
     isPersonalizationOn,
-    topazPrediction,
+    intentPrediction,
     setSelectedProduct,
     setStorefrontPage,
     recordEvent,
@@ -24,7 +24,7 @@ export const ProductListingPage: React.FC = () => {
   const selectedDeptFilter = activeDeptFilter || 'All';
   const [sortBy, setSortBy] = useState<'popular' | 'price_low' | 'price_high'>('popular');
 
-  const topTeam = topazPrediction.teams[0]?.team || 'Eagles';
+  const topTeam = intentPrediction.teams[0]?.team || 'Eagles';
 
   // Dynamic or static lists
   const defaultTeams = ['Eagles', '76ers', 'Phillies', 'Cowboys', 'Chiefs', 'Lakers'];
@@ -32,18 +32,18 @@ export const ProductListingPage: React.FC = () => {
   const defaultPlayers = ['Jalen Hurts', 'A.J. Brown', 'Joel Embiid', 'Bryce Harper', 'Patrick Mahomes', 'LeBron James'];
 
   const teamsList = isPersonalizationOn
-    ? ['All', ...Array.from(new Set(topazPrediction.teams.map((t) => t.team)))]
+    ? ['All', ...Array.from(new Set(intentPrediction.teams.map((t) => t.team)))]
     : ['All', ...defaultTeams.slice().sort()];
 
   const departmentsList = isPersonalizationOn
-    ? ['All', ...Array.from(new Set(topazPrediction.departments.map((d) => d.department)))]
+    ? ['All', ...Array.from(new Set(intentPrediction.departments.map((d) => d.department)))]
     : ['All', ...defaultDepts.slice().sort()];
 
   const playersList = defaultPlayers;
 
   // Determine filter section sequence dynamically
   const filterSequence = isPersonalizationOn
-    ? topazPrediction.topFilters
+    ? intentPrediction.topFilters
     : ['Team', 'Department', 'Player', 'Size', 'Price'];
 
   const renderFilterSection = (filterKey: string) => {
@@ -60,7 +60,7 @@ export const ProductListingPage: React.FC = () => {
           </div>
           <div className="space-y-1">
             {teamsList.map((team) => {
-              const teamProbObj = topazPrediction.teams.find((t) => t.team === team);
+              const teamProbObj = intentPrediction.teams.find((t) => t.team === team);
               const probPct = teamProbObj ? Math.round(teamProbObj.probability * 100) : 0;
               return (
                 <button
@@ -108,7 +108,7 @@ export const ProductListingPage: React.FC = () => {
           </div>
           <div className="space-y-1">
             {departmentsList.map((dept) => {
-              const deptProbObj = topazPrediction.departments.find((d) => d.department === dept);
+              const deptProbObj = intentPrediction.departments.find((d) => d.department === dept);
               const probPct = deptProbObj ? Math.round(deptProbObj.probability * 100) : 0;
               return (
                 <button
@@ -294,7 +294,7 @@ export const ProductListingPage: React.FC = () => {
                   <span>Dynamic Filter Order</span>
                 </div>
                 <div className="text-[11px] text-emerald-800">
-                  Filters reordered for active fan profile: <b>{topazPrediction.topFilters.join(' → ')}</b>
+                  Filters reordered for active fan profile: <b>{intentPrediction.topFilters.join(' → ')}</b>
                 </div>
               </div>
             )}

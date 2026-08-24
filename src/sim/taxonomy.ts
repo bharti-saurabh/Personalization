@@ -186,7 +186,7 @@ export const DEPARTMENTS: DepartmentConfig[] = [
     assortmentWeight: 0.16,
     playerAttributionRate: 0.4,
     sizeScale: 'apparel',
-    styleFamilies: ['Fanatics Branded Primary', 'Nike Legend Tee', 'Vintage Tri-Blend', 'Local Pride Graphic'],
+    styleFamilies: ['Sideline Primary', 'Nike Legend Tee', 'Vintage Tri-Blend', 'Local Pride Graphic'],
     subdepartments: ['Graphic Tee', 'Logo Tee', 'Player Tee', 'Long Sleeve'],
     outfitAffinity: { Hats: 0.28, Accessories: 0.14, Hoodies: 0.12 },
   },
@@ -208,7 +208,7 @@ export const DEPARTMENTS: DepartmentConfig[] = [
     assortmentWeight: 0.1,
     playerAttributionRate: 0.85,
     sizeScale: 'onesize',
-    styleFamilies: ['Fanatics Authentic', 'Signed Memorabilia', 'Framed Display', 'Bobblehead Series'],
+    styleFamilies: ['Stadium Authentic', 'Signed Memorabilia', 'Framed Display', 'Bobblehead Series'],
     subdepartments: ['Signed Photo', 'Framed Print', 'Bobblehead', 'Mini Helmet'],
     outfitAffinity: { Accessories: 0.1, 'Home & Office': 0.22 },
   },
@@ -255,7 +255,7 @@ export const DEPARTMENT_IDS: Department[] = DEPARTMENTS.map((d) => d.id);
 export const TEAM_IDS: TeamId[] = TEAMS.map((t) => t.id);
 export const LEAGUES: League[] = ['NFL', 'NBA', 'MLB'];
 
-export const BRANDS = ['Nike', 'Fanatics Branded', 'New Era', 'Mitchell & Ness', "'47 Brand", 'Pro Standard'];
+export const BRANDS = ['Nike', 'Sideline Collection', 'New Era', 'Mitchell & Ness', "'47 Brand", 'Pro Standard'];
 
 export const SIZE_SCALES: Record<DepartmentConfig['sizeScale'], string[]> = {
   apparel: ['S', 'M', 'L', 'XL', '2XL', '3XL'],

@@ -31,7 +31,7 @@ export const Header: React.FC = () => {
     setActiveDeptFilter,
     setActiveTeamOverride,
     activeTeamOverride,
-    topazPrediction,
+    intentPrediction,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -284,7 +284,7 @@ export const Header: React.FC = () => {
             {isPersonalizationOn ? (
               <span className="bg-emerald-950 text-emerald-300 border border-emerald-800/80 px-2.5 py-0.5 rounded font-mono text-[10px] flex items-center gap-1.5 shadow-xs">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Predicted Favorite Team: <b>{activeTeamOverride || topazPrediction.teams[0]?.team}</b> ({Math.round(topazPrediction.teams[0]?.probability * 100)}%)
+                Predicted Favorite Team: <b>{activeTeamOverride || intentPrediction.teams[0]?.team}</b> ({Math.round(intentPrediction.teams[0]?.probability * 100)}%)
               </span>
             ) : (
               <span className="bg-slate-800 text-slate-400 px-2.5 py-0.5 rounded font-mono text-[10px]">

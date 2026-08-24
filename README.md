@@ -96,14 +96,14 @@ From `npm run sim:eval` at n = 2000. Reproduced live on the Model Evidence tab.
 
 | Engine | Metric | Model | Popularity baseline | Lift |
 | --- | --- | --- | --- | --- |
-| Intent — team | Recall@1 | 41.6% | 21.6% | 1.93x |
-| Intent — team | NDCG@10 | 69.7% | 59.8% | 1.17x |
-| Intent — department | Recall@1 | 21.3% | 18.4% | 1.15x |
-| Intent — department | Recall@3 | 57.7% | 60.1% | **0.96x** |
-| Similarity | Recall@1 | 4.4% | 1.0% | 4.40x |
-| Similarity | NDCG@10 | 6.0% | 1.4% | 4.24x |
-| Complement | Recall@1 | 2.1% | 2.1% | 1.00x |
-| Complement | NDCG@10 | 7.8% | 5.6% | 1.39x |
+| Intent — team | Recall@1 | 41.1% | 21.3% | 1.93x |
+| Intent — team | NDCG@10 | 69.7% | 59.3% | 1.18x |
+| Intent — department | Recall@1 | 19.7% | 17.5% | 1.12x |
+| Intent — department | Recall@3 | 54.6% | 57.9% | **0.94x** |
+| Similarity | Recall@1 | 4.5% | 1.1% | 4.09x |
+| Similarity | NDCG@10 | 6.2% | 1.4% | 4.43x |
+| Complement | Recall@1 | 2.9% | 2.9% | 1.00x |
+| Complement | NDCG@10 | 9.4% | 6.9% | 1.37x |
 
 Two of these are unflattering and are left in deliberately. Department intent **loses** to
 popularity at Recall@3, because department mix is far less person-specific than team

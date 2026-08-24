@@ -8,7 +8,7 @@ import { TEAM_IDS, TEAM_BY_ID, DEPARTMENT_IDS } from '../../sim/taxonomy';
 export const StorefrontHome: React.FC = () => {
   const {
     isPersonalizationOn,
-    topazPrediction,
+    intentPrediction,
     products,
     setSelectedProduct,
     setStorefrontPage,
@@ -21,8 +21,8 @@ export const StorefrontHome: React.FC = () => {
   } = useApp();
 
   // Primary predicted team or fallback
-  const primaryTeam = isPersonalizationOn ? activeTeamOverride || topazPrediction.teams[0]?.team || 'Eagles' : 'All Teams';
-  const primaryTeamProb = Math.round((topazPrediction.teams[0]?.probability || 0.7) * 100);
+  const primaryTeam = isPersonalizationOn ? activeTeamOverride || intentPrediction.teams[0]?.team || 'Eagles' : 'All Teams';
+  const primaryTeamProb = Math.round((intentPrediction.teams[0]?.probability || 0.7) * 100);
 
   // --- The unpersonalized storefront ---------------------------------------
   // These orderings have to be genuinely different from the model's, or the OFF
@@ -48,11 +48,11 @@ export const StorefrontHome: React.FC = () => {
   // Rows rendered by the team and department widgets. Personalized rows carry a
   // probability; unpersonalized ones deliberately do not have one to carry.
   const teamRows: { team: TeamId; probability: number | null }[] = isPersonalizationOn
-    ? topazPrediction.teams.map((t) => ({ team: t.team, probability: t.probability }))
+    ? intentPrediction.teams.map((t) => ({ team: t.team, probability: t.probability }))
     : popularTeams.map((team) => ({ team, probability: null }));
 
   const departmentRows: { department: Department; probability: number | null }[] = isPersonalizationOn
-    ? topazPrediction.departments.map((d) => ({ department: d.department, probability: d.probability }))
+    ? intentPrediction.departments.map((d) => ({ department: d.department, probability: d.probability }))
     : alphabeticalDepartments.map((department) => ({ department, probability: null }));
 
   // Filter products by team or popularity

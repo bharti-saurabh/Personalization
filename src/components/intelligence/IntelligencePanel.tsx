@@ -23,7 +23,7 @@ import {
 export const IntelligencePanel: React.FC = () => {
   const {
     selectedScenario,
-    topazPrediction,
+    intentPrediction,
     similarityMatches,
     complementMatches,
     activeDecisionTrace,
@@ -34,7 +34,7 @@ export const IntelligencePanel: React.FC = () => {
   } = useApp();
 
   const [isJsonOpen, setIsJsonOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'topaz' | 'kepler_sim' | 'kepler_comp'>('topaz');
+  const [activeTab, setActiveTab] = useState<'intent' | 'similarity' | 'complement'>('intent');
 
   // Step-by-step ML pipeline animation state
   const [visibleStep, setVisibleStep] = useState<number>(7);
@@ -83,9 +83,9 @@ export const IntelligencePanel: React.FC = () => {
     })),
     active_overrides: {
       active_team_override: activeTeamOverride,
-      confidence_score: topazPrediction.confidence,
+      confidence_score: intentPrediction.confidence,
     },
-    candidate_teams: topazPrediction.teams.map((t) => t.team),
+    candidate_teams: intentPrediction.teams.map((t) => t.team),
   };
 
   const stepDescriptions = [
@@ -147,7 +147,7 @@ export const IntelligencePanel: React.FC = () => {
           </button>
           <div className="flex items-center space-x-1 text-[11px] text-emerald-800 font-mono bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 font-bold">
             <Zap className="h-3 w-3 text-emerald-600" />
-            <span>{topazPrediction.inferenceTimeMs}ms</span>
+            <span>{intentPrediction.inferenceTimeMs}ms</span>
           </div>
         </div>
       </div>
@@ -172,9 +172,9 @@ export const IntelligencePanel: React.FC = () => {
         {/* Model Switcher Tabs */}
         <div className="grid grid-cols-3 gap-1 bg-slate-200/70 p-1 rounded-xl border border-slate-300">
           <button
-            onClick={() => setActiveTab('topaz')}
+            onClick={() => setActiveTab('intent')}
             className={`py-1.5 rounded-lg text-[11px] font-bold transition-all ${
-              activeTab === 'topaz'
+              activeTab === 'intent'
                 ? 'bg-red-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
@@ -182,9 +182,9 @@ export const IntelligencePanel: React.FC = () => {
             Intent Model
           </button>
           <button
-            onClick={() => setActiveTab('kepler_sim')}
+            onClick={() => setActiveTab('similarity')}
             className={`py-1.5 rounded-lg text-[11px] font-bold transition-all ${
-              activeTab === 'kepler_sim'
+              activeTab === 'similarity'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
@@ -192,9 +192,9 @@ export const IntelligencePanel: React.FC = () => {
             Similarity
           </button>
           <button
-            onClick={() => setActiveTab('kepler_comp')}
+            onClick={() => setActiveTab('complement')}
             className={`py-1.5 rounded-lg text-[11px] font-bold transition-all ${
-              activeTab === 'kepler_comp'
+              activeTab === 'complement'
                 ? 'bg-amber-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
@@ -407,9 +407,9 @@ export const IntelligencePanel: React.FC = () => {
               <div className="bg-slate-50 p-2 rounded border border-slate-200">
                 <span className="text-slate-500 block text-[10px]">Engine Purpose</span>
                 <span className="font-bold text-slate-900">
-                  {activeTab === 'topaz'
+                  {activeTab === 'intent'
                     ? 'Intent Prediction Engine'
-                    : activeTab === 'kepler_sim'
+                    : activeTab === 'similarity'
                     ? 'Similarity Encoder'
                     : 'Complement Engine'}
                 </span>
@@ -417,7 +417,7 @@ export const IntelligencePanel: React.FC = () => {
               <div className="bg-slate-50 p-2 rounded border border-slate-200">
                 <span className="text-slate-500 block text-[10px]">Model Confidence</span>
                 <span className="font-extrabold text-emerald-700 font-mono">
-                  {Math.round(topazPrediction.confidence * 100)}%
+                  {Math.round(intentPrediction.confidence * 100)}%
                 </span>
               </div>
             </div>
@@ -456,10 +456,10 @@ export const IntelligencePanel: React.FC = () => {
               <span className="text-[10px] text-slate-500">Ranked Outputs</span>
             </div>
 
-            {activeTab === 'topaz' ? (
+            {activeTab === 'intent' ? (
               <div className="space-y-2">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Next Team Probabilities</div>
-                {topazPrediction.teams.map((tItem, i) => (
+                {intentPrediction.teams.map((tItem, i) => (
                   <div key={tItem.team} className="space-y-1">
                     <div className="flex justify-between text-[11px] font-semibold">
                       <span className={i === 0 ? 'text-red-600 font-bold' : 'text-slate-700'}>{tItem.team}</span>
@@ -476,7 +476,7 @@ export const IntelligencePanel: React.FC = () => {
                   </div>
                 ))}
               </div>
-            ) : activeTab === 'kepler_sim' ? (
+            ) : activeTab === 'similarity' ? (
               <div className="space-y-2">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Similarity Candidates</div>
                 {similarityMatches.slice(0, 3).map((match) => (

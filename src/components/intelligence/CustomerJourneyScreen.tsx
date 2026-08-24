@@ -25,7 +25,7 @@ export const CustomerJourneyScreen: React.FC = () => {
     selectedScenario,
     selectScenarioById,
     userEvents,
-    topazPrediction,
+    intentPrediction,
     isPersonalizationOn,
   } = useApp();
 
@@ -46,8 +46,8 @@ export const CustomerJourneyScreen: React.FC = () => {
     }
   };
 
-  const topTeam = topazPrediction.teams[0];
-  const topDept = topazPrediction.departments[0];
+  const topTeam = intentPrediction.teams[0];
+  const topDept = intentPrediction.departments[0];
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6 bg-slate-50 min-h-screen text-slate-900">
@@ -289,21 +289,21 @@ export const CustomerJourneyScreen: React.FC = () => {
                 <span>2. Statistical Model Architecture & Inference Execution</span>
               </h3>
               <span className="text-[10px] font-mono bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-200 font-bold">
-                Topaz Engine v2.4-prod
+                Intent Engine v2.4-prod
               </span>
             </div>
 
             <div className="bg-slate-900 text-white p-4 rounded-xl space-y-2 text-xs font-mono border border-slate-800">
               <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-1.5 text-[11px]">
                 <span>Model Type: <b className="text-emerald-400">Transformer Sequential Intent Encoder + Softmax</b></span>
-                <span>Latency: <b className="text-amber-400">{topazPrediction.inferenceTimeMs}ms</b></span>
+                <span>Latency: <b className="text-amber-400">{intentPrediction.inferenceTimeMs}ms</b></span>
               </div>
               <p className="text-[11px] text-slate-300 leading-relaxed font-sans">
                 The model processes historical batch embeddings and real-time clickstream event vectors through a multi-head self-attention layer. A softmax activation assigns probability logits across teams and product departments.
               </p>
               <div className="flex items-center justify-between text-[10px] pt-1 text-slate-400">
                 <span>Model Confidence Threshold: <b className="text-white">50%</b></span>
-                <span>Current Confidence: <b className={topazPrediction.confidence >= 0.5 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{(topazPrediction.confidence * 100).toFixed(0)}%</b></span>
+                <span>Current Confidence: <b className={intentPrediction.confidence >= 0.5 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{(intentPrediction.confidence * 100).toFixed(0)}%</b></span>
               </div>
             </div>
           </div>
@@ -327,7 +327,7 @@ export const CustomerJourneyScreen: React.FC = () => {
                   Team Intent Probabilities
                 </div>
                 <div className="space-y-1.5">
-                  {topazPrediction.teams.map((t, idx) => {
+                  {intentPrediction.teams.map((t, idx) => {
                     const pct = Math.round(t.probability * 100);
                     return (
                       <div key={t.team} className="space-y-0.5">
@@ -357,7 +357,7 @@ export const CustomerJourneyScreen: React.FC = () => {
                   Department Intent Probabilities
                 </div>
                 <div className="space-y-1.5">
-                  {topazPrediction.departments.slice(0, 4).map((d, idx) => {
+                  {intentPrediction.departments.slice(0, 4).map((d, idx) => {
                     const pct = Math.round(d.probability * 100);
                     return (
                       <div key={d.department} className="space-y-0.5">
