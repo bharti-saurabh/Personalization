@@ -4,6 +4,10 @@ import path from 'path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // GitHub Pages serves this repo at /Personalization/, so built asset URLs
+  // need that prefix. Local dev and the single-file build both want '/', which
+  // is what BASE_PATH defaults to.
+  base: process.env.BASE_PATH ?? '/',
   plugins: [react(), tailwindcss()],
   build: {
     rollupOptions: {
