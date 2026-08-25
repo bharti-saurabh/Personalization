@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { Trash2, ShoppingBag, Plus, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
 import { runComplementEngine } from '../../ml/engine';
 import { ProductImage } from './ProductImage';
+import { TeamCrest } from '../brand/Identity';
 
 export const CartPage: React.FC = () => {
   const {
@@ -52,7 +53,7 @@ export const CartPage: React.FC = () => {
       <div className="bg-slate-900 text-white p-6 border-b border-slate-800">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-black font-serif uppercase tracking-tight">YOUR SHOPPING CART</h1>
+            <h1 className="text-2xl font-black font-display uppercase tracking-tight">YOUR SHOPPING CART</h1>
             <p className="text-xs text-slate-400 mt-1">
               {cart.length} item(s) selected • Free shipping on orders over $75
             </p>
@@ -100,7 +101,8 @@ export const CartPage: React.FC = () => {
                       />
 
                       <div>
-                        <div className="text-[10px] font-extrabold text-red-600 uppercase tracking-wider">
+                        <div className="flex items-center gap-1.5 text-[10px] font-extrabold text-red-600 uppercase tracking-wider">
+                          <TeamCrest team={p.team} size="xs" />
                           {p.team} • {p.department}
                         </div>
                         <h3 className="text-xs font-bold text-slate-900 line-clamp-1">{p.name}</h3>
@@ -143,15 +145,17 @@ export const CartPage: React.FC = () => {
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2">
                   <Sparkles className="h-4 w-4 text-amber-500" />
-                  <span>Fans Also Add (Complement Cross-Sell Engine)</span>
+                  <span>Fans Also Add</span>
                 </h3>
                 <p className="text-xs text-slate-500">
                   Directional high co-order complement items selected for your cart items.
                 </p>
               </div>
 
-              <span className="text-[10px] bg-amber-50 text-amber-900 px-2.5 py-1 rounded border border-amber-200 font-mono font-bold">
-                Cross-Sell Engine
+              {/* The engine is named once. The heading used to carry it in
+                  parentheses and this chip repeated it verbatim beside it. */}
+              <span className="text-[10px] bg-amber-50 text-amber-900 px-2.5 py-1 rounded border border-amber-200 font-mono font-bold whitespace-nowrap">
+                Complement Cross-Sell Engine
               </span>
             </div>
 
@@ -164,12 +168,29 @@ export const CartPage: React.FC = () => {
                     key={cp.id}
                     className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col justify-between space-y-2 hover:border-amber-300 transition-colors"
                   >
-                    <div>
-                      <div className="text-[10px] font-bold text-amber-800 uppercase">
-                        {comp.relationshipType}
+                    {/* These cards used to be text and a price. Every other
+                        surface in the demo shows the garment, so three
+                        unillustrated tiles at the bottom of the cart read as
+                        placeholder rather than as merchandise.
+
+                        The render sits above the copy rather than beside it:
+                        these columns are a third of an already narrow stage, and
+                        a side-by-side thumbnail left the product name with about
+                        two words per line. */}
+                    <div className="space-y-2">
+                      <div className="relative h-24 rounded-lg overflow-hidden bg-white border border-slate-200">
+                        <ProductImage product={cp} detail={false} className="absolute inset-0 h-full w-full" />
+                        <span className="absolute top-1 left-1 grid place-items-center h-5 w-5 rounded-md bg-white/90 border border-slate-200">
+                          <TeamCrest team={cp.team} size="xs" />
+                        </span>
                       </div>
-                      <div className="text-xs font-bold text-slate-900 line-clamp-1">{cp.name}</div>
-                      <div className="text-[11px] font-black text-slate-800 mt-0.5">${price}</div>
+                      <div className="min-w-0">
+                        <div className="text-[9px] font-bold text-amber-800 uppercase tracking-wide truncate">
+                          {comp.relationshipType}
+                        </div>
+                        <div className="text-xs font-bold text-slate-900 line-clamp-2 leading-snug">{cp.name}</div>
+                        <div className="text-[11px] font-black text-slate-800 mt-0.5">${price}</div>
+                      </div>
                     </div>
 
                     <button

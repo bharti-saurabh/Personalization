@@ -15,59 +15,60 @@
  * The panel used to open on the pipeline. That was the wrong front door: it
  * looked identical after ten minutes of browsing as it did on arrival, which
  * undercut the one claim the demo exists to make.
+ *
+ * The Straive mark sits at the top of this panel and nowhere inside the
+ * storefront. That is the whole branding rule: the shop is the client's, the
+ * machinery reading it is ours.
  */
 
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { BrainCircuit, Zap, Route, GitBranch } from 'lucide-react';
+import { Route, GitBranch } from 'lucide-react';
 import { DeepDiveMenu } from '../common/DeepDiveMenu';
+import { StraiveMark } from '../brand/StraiveLogo';
 import { JourneyNarrative } from './JourneyNarrative';
 import { PipelineTrace } from './PipelineTrace';
 
 type PanelView = 'story' | 'pipeline';
 
 const VIEWS: { id: PanelView; label: string; icon: React.ReactNode; hint: string }[] = [
-  { id: 'story', label: 'Session Story', icon: <Route className="h-3 w-3" />, hint: 'Why this shopper sees this' },
-  { id: 'pipeline', label: 'Pipeline', icon: <GitBranch className="h-3 w-3" />, hint: 'How one prediction is made' },
+  { id: 'story', label: 'Session Story', icon: <Route className="h-3.5 w-3.5" />, hint: 'Why this shopper sees this' },
+  { id: 'pipeline', label: 'Pipeline', icon: <GitBranch className="h-3.5 w-3.5" />, hint: 'How one prediction is made' },
 ];
 
 export const IntelligencePanel: React.FC = () => {
   const { intentPrediction, journal } = useApp();
   const [view, setView] = useState<PanelView>('story');
 
+  const ms = intentPrediction.inferenceTimeMs;
+
   return (
-    <div className="bg-slate-50 text-slate-800 border-l border-slate-200 h-full flex flex-col overflow-hidden text-xs font-sans">
-      <div className="shrink-0 p-3 bg-white border-b border-slate-200 space-y-2.5">
+    <div className="bg-slate-100 text-slate-800 border-l border-slate-200 h-full flex flex-col overflow-hidden font-sans">
+      <div className="shrink-0 bg-white border-b border-slate-200 px-3.5 pt-3 pb-2.5 space-y-2.5">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center space-x-2 min-w-0">
-            <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
-              <BrainCircuit className="h-4 w-4" />
-            </div>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <StraiveMark className="h-6 w-6" />
             <div className="min-w-0">
-              <h2 className="font-extrabold text-sm text-slate-900 tracking-tight truncate">Behind the Scenes</h2>
-              <p className="text-[10px] text-slate-500 truncate">
-                {journal.length} decision{journal.length === 1 ? '' : 's'} logged this session
+              <h2 className="font-display font-extrabold text-[14px] text-slate-900 tracking-tight leading-tight truncate">
+                Personalization Intelligence
+              </h2>
+              <p className="text-[10.5px] text-slate-500 truncate">
+                {journal.length} decision{journal.length === 1 ? '' : 's'} this session ·{' '}
+                <span className="text-emerald-600 font-semibold">{ms < 0.1 ? '<0.1ms' : `${ms}ms`}</span> last inference
               </p>
             </div>
           </div>
-
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <DeepDiveMenu />
-            <div className="flex items-center space-x-1 text-[10px] text-emerald-800 font-mono bg-emerald-50 px-1.5 py-1 rounded-lg border border-emerald-200 font-bold">
-              <Zap className="h-3 w-3 text-emerald-600" />
-              <span>{intentPrediction.inferenceTimeMs < 0.1 ? '<0.1ms' : `${intentPrediction.inferenceTimeMs}ms`}</span>
-            </div>
-          </div>
+          <DeepDiveMenu />
         </div>
 
-        <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+        <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
           {VIEWS.map((v) => (
             <button
               key={v.id}
               onClick={() => setView(v.id)}
               title={v.hint}
-              className={`py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
-                view === v.id ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              className={`py-1.5 rounded-lg text-[11.5px] font-bold transition-all flex items-center justify-center gap-1.5 ${
+                view === v.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
               {v.icon}

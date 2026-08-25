@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, CheckCircle2, ArrowRight, Layers, Workflow, Award } from 'lucide-react';
+import { Sparkles, CheckCircle2, Award } from 'lucide-react';
 
 export const StraiveContribution: React.FC = () => {
   const stages = [
@@ -19,7 +19,7 @@ export const StraiveContribution: React.FC = () => {
           <Sparkles className="h-3.5 w-3.5" />
           <span>STRAIVE MACHINE LEARNING PARTNERSHIP</span>
         </div>
-        <h1 className="text-3xl font-black font-serif uppercase tracking-tight">
+        <h1 className="text-3xl font-black font-display uppercase tracking-tight">
           FROM DATA TO CUSTOMER EXPERIENCE
         </h1>
         <p className="text-slate-300 text-sm max-w-3xl font-sans">
@@ -89,7 +89,7 @@ export const StraiveContribution: React.FC = () => {
 
       {/* Summary Banner Statement */}
       <div className="bg-gradient-to-r from-red-600 to-rose-700 text-white p-6 rounded-2xl shadow-lg text-center space-y-2">
-        <div className="text-lg font-black font-serif italic">
+        <div className="text-lg font-black font-display italic">
           "Straive helps connect data science, ML engineering and customer-experience activation so that model output becomes a measurable commerce decision."
         </div>
       </div>

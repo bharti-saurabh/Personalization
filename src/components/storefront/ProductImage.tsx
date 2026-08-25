@@ -548,9 +548,15 @@ export interface ProductImageProps {
   className?: string;
   /** Renders the number and finer trim; turn off for very small thumbnails. */
   detail?: boolean;
+  /**
+   * Draws the neutral studio backdrop. Turn it off to place the garment on a
+   * coloured surface - the hero banner sits on the club's own gradient, and a
+   * white square floating in the middle of it looks like a broken image.
+   */
+  ground?: boolean;
 }
 
-export const ProductImage: React.FC<ProductImageProps> = ({ product, className, detail = true }) => {
+export const ProductImage: React.FC<ProductImageProps> = ({ product, className, detail = true, ground = true }) => {
   const palette = buildPalette(product);
   const kind = silhouetteFor(product);
   const seed = hashString(product.id);
@@ -584,11 +590,14 @@ export const ProductImage: React.FC<ProductImageProps> = ({ product, className, 
           Deliberately oversized: with preserveAspectRatio="meet" the viewBox is
           letterboxed inside non-square tiles, and a 200x200 backdrop would leave
           bare strips down the sides. */}
-      <rect x="-300" y="-300" width="800" height="800" fill={`url(#${gradientId})`} />
-      <rect x="-300" y="-300" width="800" height="800" fill={`url(#${gradientId}-tint)`} />
-
-      {/* Cast shadow, so the garment sits on the ground instead of floating. */}
-      <ellipse cx="100" cy="172" rx="54" ry="8" fill="#0f172a" opacity="0.14" />
+      {ground && (
+        <>
+          <rect x="-300" y="-300" width="800" height="800" fill={`url(#${gradientId})`} />
+          <rect x="-300" y="-300" width="800" height="800" fill={`url(#${gradientId}-tint)`} />
+          {/* Cast shadow, so the garment sits on the ground instead of floating. */}
+          <ellipse cx="100" cy="172" rx="54" ry="8" fill="#0f172a" opacity="0.14" />
+        </>
+      )}
 
       {isTorso ? (
         <TorsoGarment p={palette} kind={kind} number={number} stripeStyle={stripeStyle} />

@@ -121,7 +121,7 @@ export const CustomerJourneyScreen: React.FC = () => {
           <div className="text-xs font-mono text-red-400 font-bold uppercase tracking-wider mb-1">
             ACTIVE CUSTOMER JOURNEY TELEMETRY
           </div>
-          <h1 className="text-2xl font-black font-serif uppercase tracking-tight">
+          <h1 className="text-2xl font-black font-display uppercase tracking-tight">
             {selectedScenario.name}
           </h1>
           <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">{selectedScenario.description}</p>
@@ -404,7 +404,7 @@ export const CustomerJourneyScreen: React.FC = () => {
             {isPersonalizationOn ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-sans text-xs">
                 <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200 space-y-1">
-                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-serif text-sm">
+                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-display text-sm">
                     <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
                     <span>Hero A-Spot Banner</span>
                   </div>
@@ -414,7 +414,7 @@ export const CustomerJourneyScreen: React.FC = () => {
                 </div>
 
                 <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200 space-y-1">
-                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-serif text-sm">
+                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-display text-sm">
                     <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />
                     <span>Favorite Teams & Departments</span>
                   </div>
@@ -424,7 +424,7 @@ export const CustomerJourneyScreen: React.FC = () => {
                 </div>
 
                 <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200 space-y-1">
-                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-serif text-sm">
+                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-display text-sm">
                     <Layers className="h-3.5 w-3.5 text-emerald-600" />
                     <span>Product Carousel Retrieval</span>
                   </div>
@@ -434,7 +434,7 @@ export const CustomerJourneyScreen: React.FC = () => {
                 </div>
 
                 <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-200 space-y-1">
-                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-serif text-sm">
+                  <div className="font-bold text-emerald-950 flex items-center gap-1.5 font-display text-sm">
                     <ArrowRight className="h-3.5 w-3.5 text-emerald-600" />
                     <span>Catalog PLP Sorting</span>
                   </div>
@@ -445,7 +445,7 @@ export const CustomerJourneyScreen: React.FC = () => {
               </div>
             ) : (
               <div className="bg-slate-100 p-4 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
-                <div className="font-bold text-slate-900 font-serif text-sm">
+                <div className="font-bold text-slate-900 font-display text-sm">
                   Standard Global Catalog Experience (Personalization OFF)
                 </div>
                 <p className="text-[11px] text-slate-600 leading-snug">

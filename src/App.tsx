@@ -1,8 +1,8 @@
 import React, { Suspense, lazy } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { AppBar } from './components/common/AppBar';
 import { Header } from './components/common/Header';
-import { ScenarioSelector } from './components/common/ScenarioSelector';
-import { JourneyTracker } from './components/common/JourneyTracker';
+import { DemoStrip } from './components/common/DemoStrip';
 import { DEEP_DIVE_BY_ID } from './components/common/DeepDiveMenu';
 import { StorefrontHome } from './components/storefront/StorefrontHome';
 import { ProductListingPage } from './components/storefront/ProductListingPage';
@@ -109,12 +109,7 @@ function MainContent() {
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-100">
       {/* Demo chrome: which shopper we are simulating, and where they are. Kept
           above the split so it reads as a control strip for the whole stage. */}
-      {isStorefront && (
-        <>
-          <ScenarioSelector />
-          <JourneyTracker />
-        </>
-      )}
+      {isStorefront && <DemoStrip />}
 
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Shopping stage. Takes the full width when the trace panel is hidden. */}
@@ -161,7 +156,8 @@ function MainContent() {
 export default function App() {
   return (
     <AppProvider>
-      <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-950 font-sans antialiased text-slate-100">
+      <div className="h-screen w-screen flex flex-col overflow-hidden bg-ink-950 font-sans antialiased text-slate-100">
+        <AppBar />
         <Header />
         <div className="flex-1 flex min-h-0 overflow-hidden">
           <MainContent />

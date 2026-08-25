@@ -24,7 +24,6 @@ import {
   DEPARTMENT_IDS,
   LEAGUE_SEASONALITY,
   SIM_MONTH,
-  TEAMS,
   TEAM_BY_ID,
   TEAM_IDS,
 } from './taxonomy';

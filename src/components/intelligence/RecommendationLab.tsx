@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Product, TeamId } from '../../types';
-import { TestTube2, Sparkles, Filter, Sliders, CheckCircle2, XCircle, ArrowRight, Layers } from 'lucide-react';
+import { Product } from '../../types';
+import { TestTube2, Sparkles, Filter, Sliders } from 'lucide-react';
 import { runSimilarityEngine, runComplementEngine } from '../../ml/engine';
 import { ProductCard } from '../storefront/ProductCard';
 
@@ -60,7 +60,7 @@ export const RecommendationLab: React.FC = () => {
             <TestTube2 className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black font-serif uppercase tracking-tight">
+            <h1 className="text-2xl font-black font-display uppercase tracking-tight">
               RECOMMENDATION LAB SANDBOX
             </h1>
             <p className="text-xs text-slate-400">

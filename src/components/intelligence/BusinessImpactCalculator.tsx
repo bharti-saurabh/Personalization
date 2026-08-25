@@ -1,15 +1,8 @@
 import React, { useState } from 'react';
 import {
   TrendingUp,
-  DollarSign,
-  ShoppingCart,
-  Users,
-  Percent,
   Sliders,
-  Sparkles,
   Info,
-  Award,
-  Zap,
 } from 'lucide-react';
 import {
   BarChart,
@@ -64,7 +57,7 @@ export const BusinessImpactCalculator: React.FC = () => {
             <TrendingUp className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black font-serif uppercase tracking-tight">
+            <h1 className="text-2xl font-black font-display uppercase tracking-tight">
               EXECUTIVE BUSINESS IMPACT CALCULATOR
             </h1>
             <p className="text-xs text-slate-400">

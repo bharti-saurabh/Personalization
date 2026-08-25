@@ -23,6 +23,7 @@ import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
 import { Department, League, Product, TeamId } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
+import { TeamCrest, DeptGlyph } from '../brand/Identity';
 import {
   Sparkles,
   ChevronDown,
@@ -428,6 +429,18 @@ export const ProductListingPage: React.FC = () => {
                     onChange={() => toggleValue(f.key, value)}
                     className="sr-only"
                   />
+                  {/* Club and department rows carry their mark. Twelve
+                      identical checkbox rows are read one word at a time; a
+                      crest or a glyph is read at a glance. The other facets
+                      (price, size, colour) have nothing to draw, so they get
+                      nothing rather than a filler icon. */}
+                  {f.key === 'team' && <TeamCrest team={value as TeamId} size="xs" className="shrink-0" />}
+                  {f.key === 'department' && (
+                    <DeptGlyph
+                      department={value as Department}
+                      className={`h-3.5 w-3.5 shrink-0 ${checked ? 'text-slate-900' : 'text-slate-400'}`}
+                    />
+                  )}
                   <span className={`text-[11px] flex-1 truncate ${checked ? 'font-bold text-slate-900' : 'text-slate-700'}`}>
                     {f.key === 'price' ? priceLabel(value) : value}
                   </span>
@@ -491,7 +504,24 @@ export const ProductListingPage: React.FC = () => {
           className="rounded-xl px-5 py-4 text-white flex items-center justify-between gap-4 shadow-sm"
           style={{ background: `linear-gradient(100deg, ${dressTeam.primaryColor} 0%, #0f172a 85%)` }}
         >
-          <div className="min-w-0">
+          {/* The crest, at the one size on this page where it can carry the band.
+              A team shop headed by nothing but type looked the same whichever
+              club you were in.
+
+              Shown only when there is a club to show. With a team filter applied
+              it is that club; with none but personalization on it is the
+              predicted one, which is the same club the band is already dressed
+              in and which the line underneath names. With personalization off
+              and no filter, `dressTeam` falls back to Eagles for the gradient -
+              a crest on that would be asserting something the page does not
+              know. */}
+          {(shopTeamId || isPersonalizationOn) && (
+            <div className="shrink-0 hidden sm:grid place-items-center h-16 w-16 rounded-2xl bg-white/10 border border-white/20 backdrop-blur-sm">
+              <TeamCrest team={dressTeam.id} size="lg" />
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
             <div className="text-[10px] font-mono uppercase tracking-widest text-white/60">
               {shopTeamId
                 ? `Official Team Shop · ${TEAM_BY_ID[shopTeamId].league}`
@@ -499,7 +529,7 @@ export const ProductListingPage: React.FC = () => {
                   ? `${selectedLeague} Shop · All Teams`
                   : 'All Gear · Every League'}
             </div>
-            <h1 className="text-2xl font-black uppercase tracking-tight truncate font-serif">
+            <h1 className="text-2xl font-black uppercase tracking-tight truncate font-display">
               {shopTeamId
                 ? TEAM_BY_ID[shopTeamId].fullName
                 : selectedLeague

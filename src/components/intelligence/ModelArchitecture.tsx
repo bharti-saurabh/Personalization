@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from 'react';
-import { Workflow, Sparkles, Layers, Cpu, ArrowDown, Zap, Server, Activity, Info } from 'lucide-react';
+import { Workflow, ArrowDown, Activity, Info } from 'lucide-react';
 
 export const ModelArchitecture: React.FC = () => {
   const [activeSimulation, setActiveSimulation] = useState<boolean>(true);
@@ -61,7 +61,7 @@ export const ModelArchitecture: React.FC = () => {
             <Workflow className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black font-serif uppercase tracking-tight">
+            <h1 className="text-2xl font-black font-display uppercase tracking-tight">
               END-TO-END ML SYSTEM ARCHITECTURE
             </h1>
             <p className="text-xs text-slate-400">

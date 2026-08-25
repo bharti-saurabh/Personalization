@@ -9,12 +9,14 @@ import {
   Truck,
   RotateCcw,
   Sparkles,
-  Layers,
   Info,
-  CheckCircle2,
+  ChevronRight,
+  Home,
   X,
 } from 'lucide-react';
 import { SimilarityMatch, ComplementMatch } from '../../types';
+import { TEAM_BY_ID } from '../../sim/taxonomy';
+import { TeamCrest, LeagueBadge } from '../brand/Identity';
 
 export const ProductDetailPage: React.FC = () => {
   const {
@@ -105,8 +107,26 @@ export const ProductDetailPage: React.FC = () => {
 
   return (
     <div className="space-y-8 pb-12 bg-slate-50 min-h-screen">
+      {/* Breadcrumb. The listing page has one and this page did not, so arriving
+          on a product felt like being teleported - there was no visible trail
+          back to the shop you came from. */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-3 pb-0">
+        <nav className="flex items-center gap-1.5 text-[11px] text-slate-500">
+          <button onClick={() => setStorefrontPage('home')} className="hover:text-red-600 flex items-center gap-1">
+            <Home className="h-3 w-3" />
+            Home
+          </button>
+          <ChevronRight className="h-3 w-3 text-slate-300" />
+          <button onClick={() => setStorefrontPage('plp')} className="hover:text-red-600">
+            {TEAM_BY_ID[selectedProduct.team].fullName}
+          </button>
+          <ChevronRight className="h-3 w-3 text-slate-300" />
+          <span className="font-bold text-slate-800">{selectedProduct.department}</span>
+        </nav>
+      </div>
+
       {/* Main PDP Container */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6">
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Left Column: Product Visual Banner */}
           <div className="space-y-4">
@@ -117,8 +137,17 @@ export const ProductDetailPage: React.FC = () => {
                 className="absolute inset-0 h-full w-full"
               />
               <div className="relative flex justify-between items-start z-10">
-                <span className="bg-slate-900/90 text-white font-extrabold text-xs px-3 py-1 rounded-full uppercase tracking-wider border border-slate-700">
-                  {selectedProduct.league} • {selectedProduct.team}
+                {/* Club identity, drawn rather than spelled out. "NFL • EAGLES" in
+                    small caps was the only thing on this page that told you whose
+                    shop you were in, and it read as a tag rather than as a crest. */}
+                <span className="flex items-center gap-2 bg-white/95 backdrop-blur-sm pl-1.5 pr-2.5 py-1.5 rounded-full border border-slate-200 shadow-sm">
+                  <TeamCrest team={selectedProduct.team} size="sm" />
+                  <span className="flex flex-col leading-none gap-0.5">
+                    <span className="text-[11px] font-extrabold text-slate-900 uppercase tracking-wider">
+                      {selectedProduct.team}
+                    </span>
+                    <LeagueBadge league={selectedProduct.league} />
+                  </span>
                 </span>
                 <span className="bg-emerald-500 text-slate-950 font-black text-xs px-3 py-1 rounded-full shadow-xs">
                   {selectedProduct.inventoryStatus}
@@ -157,7 +186,7 @@ export const ProductDetailPage: React.FC = () => {
                 <span>{selectedProduct.department}</span>
               </div>
 
-              <h1 className="text-2xl font-black text-slate-900 font-serif leading-snug mt-1">
+              <h1 className="text-2xl font-black text-slate-900 font-display leading-snug mt-1">
                 {selectedProduct.name}
               </h1>
 
@@ -267,7 +296,7 @@ export const ProductDetailPage: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="text-lg font-extrabold text-slate-900 font-serif">
+                <h2 className="text-lg font-extrabold text-slate-900 font-display">
                   {isPersonalizationOn ? 'You May Also Like' : 'Similar Products'}
                 </h2>
                 {isPersonalizationOn && (
@@ -284,15 +313,14 @@ export const ProductDetailPage: React.FC = () => {
               </p>
             </div>
 
-            <div
-              className={`text-[11px] font-mono px-2.5 py-1 rounded border ${
-                isPersonalizationOn
-                  ? 'text-indigo-700 bg-indigo-50 border-indigo-200'
-                  : 'text-slate-600 bg-slate-100 border-slate-200'
-              }`}
-            >
-              {isPersonalizationOn ? 'Vector Embedding Distance Search' : 'Standard Catalog Match'}
-            </div>
+            {/* Only when personalization is OFF. With it on, the badge beside the
+                heading already names the engine, and two chips saying the same
+                thing a hand apart is noise rather than emphasis. */}
+            {!isPersonalizationOn && (
+              <div className="text-[11px] font-mono px-2.5 py-1 rounded border text-slate-600 bg-slate-100 border-slate-200">
+                Standard Catalog Match
+              </div>
+            )}
           </div>
 
           {/* Cards Row */}
@@ -328,7 +356,7 @@ export const ProductDetailPage: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="text-lg font-extrabold text-slate-900 font-serif">
+                <h2 className="text-lg font-extrabold text-slate-900 font-display">
                   {isPersonalizationOn ? 'Complete the Look' : 'Frequently Bought Together'}
                 </h2>
                 {isPersonalizationOn && (
@@ -345,15 +373,11 @@ export const ProductDetailPage: React.FC = () => {
               </p>
             </div>
 
-            <div
-              className={`text-[11px] font-mono px-2.5 py-1 rounded border ${
-                isPersonalizationOn
-                  ? 'text-amber-800 bg-amber-50 border-amber-200'
-                  : 'text-slate-600 bg-slate-100 border-slate-200'
-              }`}
-            >
-              {isPersonalizationOn ? 'Co-Order & Graph Co-Cart Models' : 'Standard Cross-Sell Catalog'}
-            </div>
+            {!isPersonalizationOn && (
+              <div className="text-[11px] font-mono px-2.5 py-1 rounded border text-slate-600 bg-slate-100 border-slate-200">
+                Standard Cross-Sell Catalog
+              </div>
+            )}
           </div>
 
           {/* Cards Row */}

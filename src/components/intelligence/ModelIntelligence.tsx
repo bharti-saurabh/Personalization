@@ -82,7 +82,7 @@ export const ModelIntelligence: React.FC = () => {
             <BrainCircuit className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black font-serif uppercase tracking-tight">
+            <h1 className="text-2xl font-black font-display uppercase tracking-tight">
               MODEL INTELLIGENCE ARCHITECTURE
             </h1>
             <p className="text-xs text-slate-400">

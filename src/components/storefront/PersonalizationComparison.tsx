@@ -44,7 +44,7 @@ export const PersonalizationComparison: React.FC = () => {
           <div className="text-xs font-mono text-red-400 font-bold uppercase tracking-wider mb-1">
             EXPERIENCE COMPARISON
           </div>
-          <h1 className="text-2xl font-black font-serif uppercase tracking-tight">
+          <h1 className="text-2xl font-black font-display uppercase tracking-tight">
             STANDARD VS ML-PERSONALIZED EXPERIENCE
           </h1>
           <p className="text-xs text-slate-400 mt-1">

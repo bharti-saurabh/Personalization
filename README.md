@@ -83,7 +83,9 @@ src/
   components/
     storefront/    The shopping experience
     intelligence/  Explanation, evidence, architecture and business screens
-    common/        Chrome: header, nav, scenario selector, journey tracker
+    brand/         Straive lockup and mark; team crests, league badges and
+                   department glyphs, all drawn rather than fetched
+    common/        Chrome: Straive app bar, storefront header and nav, demo strip
   context/     Single app store; engine calls are memoised on their inputs.
 ```
 
@@ -116,7 +118,14 @@ the rest. Both are stated on the screens that report them.
   every run. Change the seed in `src/sim/rng.ts` to see the sampling variance — it is
   large enough at small n to flatter a metric by 3x, which is why the UI evaluates at 2000.
 - Product imagery is generated inline as SVG (`ProductImage.tsx`). Nothing is fetched.
-- The app is intentionally de-branded. Engines are named by what they do — Intent,
-  Similarity, Complement.
+  The same is true of every crest, league badge and department glyph
+  (`components/brand/Identity.tsx`) — no external image URL appears anywhere.
+- Two palettes, and the split carries meaning. Straive orange is everything the
+  delivery team built: the app bar, the intelligence panel, the deep dives.
+  ProSports red is the storefront. A viewer can tell at a glance which half of the
+  screen is the shop and which half is the machinery reading it.
+- The retailer is intentionally de-branded — ProSports is fictional, and the engines
+  are named by what they do: Intent, Similarity, Complement. The only real mark in
+  the app is Straive's, and it never appears inside the storefront.
 - To replace the simulator with real data, `src/sim` is the seam: `getDataset()` is the
   only thing `src/ml` and the UI consume.
