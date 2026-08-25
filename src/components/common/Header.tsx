@@ -54,7 +54,17 @@ export const Header: React.FC = () => {
     setStorefrontPage('pdp');
     setSearchQuery('');
     setIsSearchOpen(false);
-    recordEvent(`Searched & Selected Product: ${p.name}`);
+    // Carry the product's own attributes: a search landing is one of the
+    // strongest department signals in the session, and an event with no team or
+    // department on it cannot move the posterior at all.
+    recordEvent(`Searched & Selected Product: ${p.name}`, {
+      pageType: 'Search',
+      productId: p.id,
+      productName: p.name,
+      team: p.team,
+      league: p.league,
+      department: p.department,
+    });
   };
 
   const handleCategoryClick = (dept?: Department) => {
@@ -65,6 +75,10 @@ export const Header: React.FC = () => {
       setActiveTeamOverride(null);
       setActiveLeagueFilter(null);
     }
+    recordEvent(dept ? `Browsed category: ${dept}` : 'Browsed all gear', {
+      pageType: 'PLP',
+      department: dept,
+    });
   };
 
   // League links used to set a team override, and two of them named teams the
@@ -76,6 +90,7 @@ export const Header: React.FC = () => {
     setActiveDeptFilter(null);
     setActiveTeamOverride(null);
     setActiveLeagueFilter(league);
+    recordEvent(`Browsed league: ${league}`, { pageType: 'PLP', league });
   };
 
   return (

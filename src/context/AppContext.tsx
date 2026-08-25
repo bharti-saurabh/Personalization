@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useRef, useState, useEffect } from 'react';
 import {
   Product,
   Scenario,
@@ -7,13 +7,14 @@ import {
   NavigationTab,
   CartItem,
   UserEvent,
-  IntentPrediction,
-  SimilarityMatch,
-  ComplementMatch,
   DecisionTrace,
   TeamId,
   League,
 } from '../types';
+import { IntentResult } from '../ml/intent';
+import { SimilarityResult } from '../ml/similarity';
+import { ComplementResult } from '../ml/complement';
+import { JournalBeat, buildBeat } from '../ml/journal';
 import { SCENARIOS, findAnchorProduct } from '../data/scenarios';
 import { getDataset } from '../sim/dataset';
 import {
@@ -60,10 +61,17 @@ interface AppContextType {
   lastModelFeedback: string | null;
 
   // Live ML Engine Outputs
-  intentPrediction: IntentPrediction;
-  similarityMatches: SimilarityMatch[];
-  complementMatches: ComplementMatch[];
+  intentPrediction: IntentResult;
+  similarityMatches: SimilarityResult[];
+  complementMatches: ComplementResult[];
   activeDecisionTrace: DecisionTrace;
+
+  /**
+   * Running account of the session: one beat per thing the shopper did, each
+   * carrying what ran, what it scored, which rule fired and what got rendered.
+   * Newest first. See ml/journal.ts.
+   */
+  journal: JournalBeat[];
   activeExplainedProduct: Product | null;
   setActiveExplainedProduct: (p: Product | null) => void;
 }
@@ -107,6 +115,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeLeagueFilter, setActiveLeagueFilter] = useState<League | null>(null);
   const [lastModelFeedback, setLastModelFeedback] = useState<string | null>(null);
   const [activeExplainedProduct, setActiveExplainedProduct] = useState<Product | null>(null);
+  const [journal, setJournal] = useState<JournalBeat[]>([]);
+
+  // Journal bookkeeping. The recorder needs three things React state cannot give
+  // it: which event it has already written up, what the posterior looked like
+  // BEFORE this event so the deltas are real, and a monotonic sequence number.
+  const loggedEventId = useRef<string | null>(null);
+  const prevIntentRef = useRef<IntentResult | null>(null);
+  const beatSeq = useRef(0);
 
   // Switch Scenario
   const selectScenarioById = (id: ScenarioId) => {
@@ -117,6 +133,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setActiveTeamOverride(null);
       setActiveDeptFilter(null);
       setActiveLeagueFilter(null);
+      // A new persona is a new session, so the story starts over. Clearing the
+      // cursor as well makes the next beat a fresh "session opened" read rather
+      // than a delta against the previous shopper's posterior.
+      setJournal([]);
+      loggedEventId.current = null;
+      prevIntentRef.current = null;
       // Anchor each scenario on a representative generated product, resolved by
       // predicate rather than by id - catalog ids move with the generator seed.
       if (found.id === 'hot_market') {
@@ -224,6 +246,108 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [intentPrediction, targetComponent, products]
   );
 
+  /* ------------------------------------------------------------- journal -- */
+
+  // A render-time snapshot of everything a beat needs. The recorder effects fire
+  // on one narrow trigger each, so they read the rest from here rather than
+  // listing it as a dependency and re-firing on every unrelated change.
+  const latest = useRef({
+    scenario: selectedScenario,
+    intent: intentPrediction,
+    trace: activeDecisionTrace,
+    similarity: similarityMatches,
+    complement: complementMatches,
+    page: storefrontPage,
+    anchor: selectedProduct,
+    personalizationOn: isPersonalizationOn,
+  });
+  latest.current = {
+    scenario: selectedScenario,
+    intent: intentPrediction,
+    trace: activeDecisionTrace,
+    similarity: similarityMatches,
+    complement: complementMatches,
+    page: storefrontPage,
+    anchor: selectedProduct,
+    personalizationOn: isPersonalizationOn,
+  };
+
+  /**
+   * Writes one beat per new event.
+   *
+   * Timing is the whole trick here. `recordEvent` prepends to `userEvents`, which
+   * invalidates the intent memo in the same render, so by the time this effect
+   * runs `latest.current.intent` is the posterior AFTER the event while
+   * `prevIntentRef` still holds the one from before it. That is what makes the
+   * per-team deltas on each card genuine rather than reconstructed.
+   */
+  useEffect(() => {
+    const newest = userEvents[0];
+    const key = newest?.id ?? '__empty__';
+    if (loggedEventId.current === key) return;
+
+    const isSessionStart = loggedEventId.current === null;
+    loggedEventId.current = key;
+
+    const L = latest.current;
+    beatSeq.current += 1;
+
+    const beat = buildBeat({
+      seq: beatSeq.current,
+      kind: isSessionStart ? 'session' : 'action',
+      // The seed beat summarises the whole opening read, so pinning it to one
+      // replayed history event would misattribute the posterior to that event.
+      event: isSessionStart ? undefined : newest,
+      headline: isSessionStart
+        ? `Session opened - ${L.scenario.name.split(':')[1]?.trim() || L.scenario.name}`
+        : undefined,
+      scenario: L.scenario,
+      intent: L.intent,
+      prevIntent: prevIntentRef.current,
+      trace: L.trace,
+      similarity: L.similarity,
+      complement: L.complement,
+      page: L.page,
+      anchor: L.anchor,
+      personalizationOn: L.personalizationOn,
+    });
+
+    prevIntentRef.current = L.intent;
+    // Capped because this is a demo session, not an audit log - forty beats is
+    // far more than anyone scrolls and keeps the panel's DOM bounded.
+    setJournal((prev) => [beat, ...prev].slice(0, 40));
+  }, [userEvents]);
+
+  /**
+   * Flipping personalization does not change a single score - the engines keep
+   * running either way - but it changes everything about what reaches the page.
+   * That is worth its own beat, because it is the clearest statement in the demo
+   * of where the model stops and the merchandising decision begins.
+   */
+  const prevPersonalizationOn = useRef(isPersonalizationOn);
+  useEffect(() => {
+    if (prevPersonalizationOn.current === isPersonalizationOn) return;
+    prevPersonalizationOn.current = isPersonalizationOn;
+
+    const L = latest.current;
+    beatSeq.current += 1;
+    const beat = buildBeat({
+      seq: beatSeq.current,
+      kind: 'setting',
+      headline: `Personalization switched ${isPersonalizationOn ? 'ON' : 'OFF'}`,
+      scenario: L.scenario,
+      intent: L.intent,
+      prevIntent: prevIntentRef.current,
+      trace: L.trace,
+      similarity: L.similarity,
+      complement: L.complement,
+      page: L.page,
+      anchor: L.anchor,
+      personalizationOn: isPersonalizationOn,
+    });
+    setJournal((prev) => [beat, ...prev].slice(0, 40));
+  }, [isPersonalizationOn]);
+
   return (
     <AppContext.Provider
       value={{
@@ -258,6 +382,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         similarityMatches,
         complementMatches,
         activeDecisionTrace,
+        journal,
         activeExplainedProduct,
         setActiveExplainedProduct,
       }}

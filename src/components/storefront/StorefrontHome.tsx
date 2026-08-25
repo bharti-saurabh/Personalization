@@ -63,7 +63,10 @@ export const StorefrontHome: React.FC = () => {
 
   const handleTeamClick = (team: TeamId) => {
     setActiveTeamOverride(team);
-    recordEvent(`Clicked Team Widget: ${team}`);
+    // The team has to travel on the event, not just into the override, or the
+    // journal shows a click that visibly changed the page while claiming the
+    // model saw no signal.
+    recordEvent(`Clicked predicted team: ${team}`, { team });
   };
 
   const handleProductSelect = (p: typeof products[0]) => {
@@ -212,7 +215,10 @@ export const StorefrontHome: React.FC = () => {
                 onClick={() => {
                   setActiveDeptFilter(deptItem.department);
                   setStorefrontPage('plp');
-                  recordEvent(`Selected Recommended Department: ${deptItem.department}`);
+                  recordEvent(`Selected recommended department: ${deptItem.department}`, {
+                    pageType: 'PLP',
+                    department: deptItem.department,
+                  });
                 }}
                 className={`px-3 py-1.5 rounded-lg font-bold text-xs shrink-0 flex items-center space-x-1.5 transition-all ${
                   isDeptSelected

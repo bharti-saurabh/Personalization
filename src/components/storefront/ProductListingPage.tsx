@@ -21,7 +21,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
-import { League, Product, TeamId } from '../../types';
+import { Department, League, Product, TeamId } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
 import {
   Sparkles,
@@ -291,8 +291,16 @@ export const ProductListingPage: React.FC = () => {
       return { ...s, [key]: next };
     });
 
+    // Ticking a team or department box is the strongest in-session statement a
+    // shopper makes, so the event has to carry that value on the field the intent
+    // model actually reads. Recording it only as an opaque `filterApplied` string
+    // left the model blind to the one action the demo most wants it to react to.
     recordEvent(`Filtered by ${FACET_BY_KEY[key].label}: ${key === 'price' ? priceLabel(value) : value}`, {
+      pageType: 'Filter',
       filterApplied: `${key}=${value}`,
+      team: key === 'team' ? (value as TeamId) : undefined,
+      department: key === 'department' ? (value as Department) : undefined,
+      league: key === 'league' ? (value as League) : undefined,
     });
   };
 
@@ -304,7 +312,7 @@ export const ProductListingPage: React.FC = () => {
     setActiveTeamOverride(null);
     setActiveDeptFilter(null);
     setActiveLeagueFilter(null);
-    recordEvent('Cleared all filters');
+    recordEvent('Cleared all filters', { pageType: 'Filter' });
   };
 
   const appliedChips = FACETS.flatMap((f) =>
