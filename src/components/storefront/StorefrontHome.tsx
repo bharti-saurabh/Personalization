@@ -1,8 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
 import { ProductImage } from './ProductImage';
-import { Sparkles, ArrowRight, TrendingUp } from 'lucide-react';
+import { Sparkles, ArrowRight, TrendingUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import { TeamId, Department } from '../../types';
 import { TEAM_IDS, TEAM_BY_ID, DEPARTMENT_IDS } from '../../sim/taxonomy';
 import { TeamCrest, LeagueBadge, DeptGlyph } from '../brand/Identity';
@@ -53,8 +53,39 @@ export const StorefrontHome: React.FC = () => {
 
   // Filter products by team or popularity
   const heroTeamProducts = products.filter((p) => p.team === primaryTeam);
-  const personalizedCarouselProducts =
-    isPersonalizationOn && heroTeamProducts.length >= 1 ? heroTeamProducts : globalBestSellers;
+
+  /**
+   * The rail under "Picked for ...".
+   *
+   * This used to be every product the predicted club sells, in catalog order,
+   * rendered as an open-ended grid - roughly a hundred and forty cards down the
+   * page, under a caption claiming they were ranked and in stock. They were
+   * neither. It is a real ranking now, and the caption is true:
+   *
+   *   in stock   pre-orders are dropped, because a rail that leads with
+   *              something you cannot have yet is a bad first impression
+   *   ranked     by the department posterior the intent model just produced,
+   *              broken by catalog popularity within a department
+   *   capped     at twelve, which is a rail rather than a page
+   *
+   * With personalization off it is the global bestseller list instead: the
+   * same twelve for every visitor, which is the comparison being made.
+   */
+  const RAIL_SIZE = 12;
+  const personalizedCarouselProducts = useMemo(() => {
+    if (!isPersonalizationOn || heroTeamProducts.length === 0) {
+      return globalBestSellers.filter((p) => p.inventoryStatus !== 'Pre-Order').slice(0, RAIL_SIZE);
+    }
+    const deptRank = new Map(intentPrediction.departments.map((d, i) => [d.department as string, i]));
+    return heroTeamProducts
+      .filter((p) => p.inventoryStatus !== 'Pre-Order')
+      .sort(
+        (a, b) =>
+          (deptRank.get(a.department) ?? 99) - (deptRank.get(b.department) ?? 99) ||
+          b.popularity - a.popularity
+      )
+      .slice(0, RAIL_SIZE);
+  }, [isPersonalizationOn, heroTeamProducts, globalBestSellers, intentPrediction]);
 
   /**
    * The single garment the hero shows off, so the banner is merchandise rather
@@ -350,13 +381,106 @@ export const StorefrontHome: React.FC = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Carousel>
             {personalizedCarouselProducts.map((prod) => (
-              <ProductCard key={prod.id} product={prod} onSelect={handleProductSelect} />
+              <div key={prod.id} className="w-[196px] shrink-0 snap-start">
+                <ProductCard product={prod} onSelect={handleProductSelect} />
+              </div>
             ))}
-          </div>
+          </Carousel>
         </div>
       </section>
+    </div>
+  );
+};
+
+/**
+ * A horizontal product rail.
+ *
+ * A rail rather than a grid because a grid of recommendations makes an implicit
+ * claim that the grid is the whole answer, and invites the eye to read down the
+ * page. A rail says "here is the top of a ranked list, in order" - which is what
+ * the intent model actually produced - and it costs one screen of height rather
+ * than five.
+ *
+ * The arrows page by the visible width and disable themselves at the ends, so a
+ * greyed-out arrow is an honest signal that there is nothing more that way. The
+ * track is still a plain scroll container underneath, so a trackpad, a touch
+ * screen and the keyboard all work without the arrows.
+ */
+/**
+ * How far from a hard edge still counts as being at it.
+ *
+ * Mandatory snapping does not settle the track at zero: the first card's snap
+ * point sits at the track's own left padding, so a rail that has never been
+ * touched reports scrollLeft 4. At a two-pixel tolerance that read as scrolled,
+ * and the left fade painted a white wash over the first card on load.
+ */
+const EDGE_SLACK = 8;
+
+const Carousel: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(false);
+
+  const sync = useCallback(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    setAtStart(el.scrollLeft <= EDGE_SLACK);
+    setAtEnd(el.scrollLeft >= el.scrollWidth - el.clientWidth - EDGE_SLACK);
+  }, []);
+
+  // Run once on mount as well as on scroll: a rail whose contents fit has no
+  // scroll event to wait for, and both arrows should read as disabled.
+  const attach = useCallback(
+    (el: HTMLDivElement | null) => {
+      trackRef.current = el;
+      if (el) requestAnimationFrame(sync);
+    },
+    [sync]
+  );
+
+  const page = (dir: -1 | 1) => {
+    const el = trackRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * Math.max(200, el.clientWidth - 80), behavior: 'smooth' });
+  };
+
+  const arrow = (disabled: boolean) =>
+    `grid place-items-center h-8 w-8 rounded-full border transition-colors ${
+      disabled
+        ? 'border-slate-200 text-slate-300 cursor-default'
+        : 'border-slate-300 text-slate-700 hover:bg-slate-900 hover:text-white hover:border-slate-900'
+    }`;
+
+  return (
+    <div className="relative">
+      <div
+        ref={attach}
+        onScroll={sync}
+        className="flex gap-4 overflow-x-auto scrollbar-none snap-x snap-mandatory pb-1 -mx-1 px-1"
+      >
+        {children}
+      </div>
+
+      {/* Edge fade, so a half-visible card reads as "scrolls on" rather than as
+          a card that got cut off. Pointer events off or it would eat clicks on
+          the card underneath it. */}
+      {!atEnd && (
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-linear-to-l from-white to-transparent" />
+      )}
+      {!atStart && (
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-12 bg-linear-to-r from-white to-transparent" />
+      )}
+
+      <div className="flex justify-end gap-2 mt-3">
+        <button onClick={() => page(-1)} disabled={atStart} aria-label="Previous" className={arrow(atStart)}>
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button onClick={() => page(1)} disabled={atEnd} aria-label="Next" className={arrow(atEnd)}>
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 };

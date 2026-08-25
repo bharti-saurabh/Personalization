@@ -23,8 +23,7 @@ That distinction matters in both directions:
   evidence the pipeline is wired correctly — not as a forecast of performance on real
   retail data.
 
-Every screen that shows a figure says which of those two it is. The Business Impact
-calculator, which shows neither, says so in the loudest terms on the page.
+Every screen that shows a figure says which of those two it is.
 
 ## Run it
 
@@ -82,10 +81,11 @@ src/
                and the offline evaluation harness.
   components/
     storefront/    The shopping experience
-    intelligence/  Explanation, evidence, architecture and business screens
+    intelligence/  Explanation, evidence, architecture and partnership screens
     brand/         Straive lockup and mark; team crests, league badges and
                    department glyphs, all drawn rather than fetched
-    common/        Chrome: Straive app bar, storefront header and nav, demo strip
+    common/        Chrome: Straive app bar, storefront header and nav, demo strip,
+                   and the collapsible deep-dive rail that navigates the whole app
   context/     Single app store; engine calls are memoised on their inputs.
 ```
 

@@ -160,15 +160,23 @@ export interface PairEstimate {
   lambda: number;
 }
 
+/**
+ * Pair estimate for one anchor/candidate pair.
+ *
+ * The two products are passed in directly rather than looked up by index. The
+ * indices address the co-order graph and the occurrence array, both of which are
+ * catalog-wide; the `products` array a caller hands to `retrieveComplements` may
+ * be any filtered subset, so indexing *it* with a catalog index reads the wrong
+ * row - or off the end of the array entirely, which is what happened when the
+ * recommendation sandbox first passed a constrained candidate pool.
+ */
 function estimatePair(
   model: ComplementModel,
-  products: Product[],
+  anchor: Product,
+  candidate: Product,
   anchorIdx: number,
   candidateIdx: number
 ): PairEstimate {
-  const anchor = products[anchorIdx];
-  const candidate = products[candidateIdx];
-
   const support = model.graphs.coOrder.get(anchorIdx)?.get(candidateIdx) ?? 0;
   const anchorOccurrences = model.itemOccurrences[anchorIdx];
 
@@ -271,7 +279,7 @@ export function retrieveComplements(
     // Eagles jersey. Team consistency is a hard business rule here, not a score.
     if (candidate.team !== anchor.team) continue;
 
-    const est = estimatePair(model, products, anchorIdx, i);
+    const est = estimatePair(model, anchor, candidate, anchorIdx, i);
     const { probability, lift, level, support } = est;
     if (probability <= minScore) continue;
 

@@ -108,6 +108,42 @@ const INTENT_FILTER_TO_FACET: Record<string, FacetKey> = {
   Gender: 'gender',
 };
 
+/**
+ * The order a shopper narrows down in when nothing else is known: which sport,
+ * which club, what kind of garment, then the questions that only make sense
+ * once those are answered. It is the fallback ordering with personalization
+ * off, and it is what the rail converges on as selections accumulate.
+ */
+const FUNNEL: FacetKey[] = ['league', 'team', 'department', 'gender', 'size', 'player', 'price', 'brand', 'colorway'];
+const FUNNEL_POS = new Map(FUNNEL.map((k, i) => [k, i]));
+
+/**
+ * How much answering this facet would actually narrow the current results,
+ * as normalised Shannon entropy over its value distribution.
+ *
+ * This is the piece that kills dead questions. Filter down to Hats and every
+ * remaining product is One Size: the Size facet has one value, no entropy, and
+ * it drops off the top of the rail on its own rather than needing a rule that
+ * says "hide size for hats". Filter to one club and the Team facet does the
+ * same. A facet that splits the results many ways scores near 1.
+ *
+ * Normalised against eight values rather than against the facet's own value
+ * count, deliberately: a question with eight balanced answers really is more
+ * useful than a coin flip, and dividing by log2(n) would rate them equal.
+ */
+const informationGain = (tally: Map<string, number>): number => {
+  const counts = [...tally.values()].filter((n) => n > 0);
+  if (counts.length < 2) return 0;
+  const total = counts.reduce((a, b) => a + b, 0);
+  if (total === 0) return 0;
+  let h = 0;
+  for (const n of counts) {
+    const pr = n / total;
+    h -= pr * Math.log2(pr);
+  }
+  return Math.min(1, h / Math.log2(8));
+};
+
 const priceLabel = (id: string) => PRICE_BANDS.find((b) => b.id === id)?.label ?? id;
 
 const SORTS = [
@@ -247,23 +283,88 @@ export const ProductListingPage: React.FC = () => {
     setVisibleCount(PAGE_SIZE);
   }, [sel, sortBy]);
 
-  /** Facet rail order. Intent decides it when personalization is on. */
-  const orderedFacets = useMemo(() => {
-    if (!isPersonalizationOn) return FACETS;
-    const ranked = intentPrediction.topFilters
-      .map((f) => INTENT_FILTER_TO_FACET[f])
-      .filter((k): k is FacetKey => !!k);
-    const seen = new Set<FacetKey>();
-    const out: FacetDef[] = [];
-    for (const k of ranked) {
-      if (!seen.has(k)) {
-        seen.add(k);
-        out.push(FACET_BY_KEY[k]);
-      }
-    }
-    for (const f of FACETS) if (!seen.has(f.key)) out.push(f);
-    return out;
-  }, [isPersonalizationOn, intentPrediction]);
+  /**
+   * Facet rail order, recomputed on every selection.
+   *
+   * The rail used to be ordered once, by the intent model, and then sat still
+   * however much you refined. That is wrong in a way anyone shopping notices:
+   * on a Cowboys page, having ticked Jerseys and Men, the most useful next
+   * question is Size - and the rail was still leading with Player, because
+   * Player was where the intent model had put it on arrival.
+   *
+   * So the rail has two bands.
+   *
+   *   ANSWERED   facets you have ticked something in, in funnel order. They
+   *              stay at the top and stay open: these are the decisions you
+   *              have made, and the place you go to undo one.
+   *
+   *   REMAINING  everything else, sorted by how useful it is to answer NEXT:
+   *
+   *                 score = informationGain x base
+   *
+   *              informationGain drops a facet that cannot narrow anything
+   *              (see above). `base` is where intent and the funnel trade off:
+   *
+   *                 base = (1 - t) x intent + t x funnel,   t = min(1, answered/3)
+   *
+   *              With nothing selected t is 0 and the order is purely the
+   *              intent model's - which is the claim this demo makes, and the
+   *              green badge that goes with it. Each selection moves t, and by
+   *              the third the order is the shopping funnel from wherever you
+   *              now are. Both inputs are honest at their own end: the model is
+   *              good at guessing where to START, and it has nothing to say
+   *              about what follows Jerseys + Men that the funnel does not say
+   *              better.
+   *
+   * With personalization off, t is pinned at 1: no intent term, funnel only.
+   */
+  const answeredCount = useMemo(() => FACETS.filter((f) => sel[f.key].length > 0).length, [sel]);
+
+  const railFacets = useMemo(() => {
+    const answered: FacetDef[] = [];
+    const remaining: FacetDef[] = [];
+    for (const f of FACETS) (sel[f.key].length > 0 ? answered : remaining).push(f);
+
+    answered.sort((a, b) => (FUNNEL_POS.get(a.key) ?? 99) - (FUNNEL_POS.get(b.key) ?? 99));
+
+    const intentRank = new Map<FacetKey, number>();
+    intentPrediction.topFilters.forEach((name, i) => {
+      const k = INTENT_FILTER_TO_FACET[name];
+      if (k && !intentRank.has(k)) intentRank.set(k, i);
+    });
+    const nIntent = Math.max(1, intentPrediction.topFilters.length);
+
+    const t = isPersonalizationOn ? Math.min(1, answered.length / 3) : 1;
+
+    const intentOf = (k: FacetKey) => {
+      const r = intentRank.get(k);
+      return r === undefined ? 0 : 1 - r / nIntent;
+    };
+    const funnelOf = (k: FacetKey) => 1 - (FUNNEL_POS.get(k) ?? FUNNEL.length) / FUNNEL.length;
+
+    const scoreOf = (f: FacetDef) =>
+      informationGain(facetCounts[f.key]) * ((1 - t) * intentOf(f.key) + t * funnelOf(f.key));
+
+    const scores = new Map(remaining.map((f) => [f.key, scoreOf(f)]));
+    remaining.sort(
+      (a, b) =>
+        (scores.get(b.key) ?? 0) - (scores.get(a.key) ?? 0) ||
+        (FUNNEL_POS.get(a.key) ?? 99) - (FUNNEL_POS.get(b.key) ?? 99)
+    );
+
+    // The badge only claims what is true at this moment: the model is still
+    // shaping the order while t < 1, and after that the rail is following the
+    // funnel from where the shopper has got to.
+    const intentStillLeading = isPersonalizationOn && t < 1;
+    return [
+      ...answered.map((facet) => ({ facet, answered: true, badge: null as string | null })),
+      ...remaining.map((facet, i) => ({
+        facet,
+        answered: false,
+        badge: i === 0 ? (intentStillLeading ? 'ML RANKED' : 'NEXT BEST') : i === 1 && intentStillLeading ? 'ML RANKED' : null,
+      })),
+    ];
+  }, [sel, isPersonalizationOn, intentPrediction, facetCounts]);
 
   const toggleValue = (key: FacetKey, value: string) => {
     setSel((s) => {
@@ -347,7 +448,7 @@ export const ProductListingPage: React.FC = () => {
     });
   };
 
-  const renderFacet = (f: FacetDef, rankIdx: number) => {
+  const renderFacet = (f: FacetDef, badge: string | null, isAnswered: boolean) => {
     const tally = facetCounts[f.key];
     let values = Array.from(tally.entries()).filter(([, n]) => n > 0);
 
@@ -386,15 +487,31 @@ export const ProductListingPage: React.FC = () => {
           onClick={() => setCollapsed((c) => ({ ...c, [f.key]: !c[f.key] }))}
           className="w-full flex items-center justify-between text-left group"
         >
-          <span className="flex items-center gap-1.5">
-            <span className="text-[11px] font-extrabold text-slate-900 uppercase tracking-wide">{f.label}</span>
-            {isPersonalizationOn && rankIdx < 2 && (
-              <span
-                className="text-[9px] bg-emerald-100 text-emerald-800 font-mono font-bold px-1.5 py-0.5 rounded border border-emerald-200"
-                title="This filter was promoted up the rail by the intent model"
-              >
-                ML RANKED
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[11px] font-extrabold text-slate-900 uppercase tracking-wide truncate">
+              {f.label}
+            </span>
+            {isAnswered ? (
+              <span className="text-[9px] bg-red-50 text-red-700 font-mono font-bold px-1.5 py-0.5 rounded border border-red-200 shrink-0">
+                {chosen.length}
               </span>
+            ) : (
+              badge && (
+                <span
+                  className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                    badge === 'ML RANKED'
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}
+                  title={
+                    badge === 'ML RANKED'
+                      ? 'The intent model put this filter at the top of the rail'
+                      : 'The filter that would narrow these results most from here'
+                  }
+                >
+                  {badge}
+                </span>
+              )
             )}
           </span>
           <ChevronDown
@@ -574,16 +691,38 @@ export const ProductListingPage: React.FC = () => {
             )}
           </div>
 
+          {/* The caption has to move with the rail. Early on the order really is
+              the intent model's; three answers in it is the shopping funnel's,
+              and a banner still crediting the model at that point would be
+              claiming something the code stopped doing. */}
           {isPersonalizationOn && (
             <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5 flex items-start gap-1.5">
               <Sparkles className="h-3 w-3 text-emerald-600 shrink-0 mt-0.5" />
               <span className="text-[10px] text-emerald-900 leading-snug">
-                Filter order and the values inside them are ranked by predicted intent.
+                {answeredCount === 0
+                  ? 'Filter order and the values inside them are ranked by predicted intent.'
+                  : answeredCount < 3
+                    ? 'Re-ordered around your selections. Values are still ranked by predicted intent.'
+                    : 'Enough is known about this basket that the order now follows the funnel, not the model.'}
               </span>
             </div>
           )}
 
-          <div className="mt-1">{orderedFacets.map((f, i) => renderFacet(f, i))}</div>
+          <div className="mt-1">
+            {railFacets.map((r, i) => (
+              <React.Fragment key={r.facet.key}>
+                {/* The line where answered questions end and the next one
+                    begins. Without it the rail is one undifferentiated list
+                    and the reordering below looks arbitrary. */}
+                {!r.answered && i > 0 && railFacets[i - 1].answered && (
+                  <div className="pt-3 pb-1 text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+                    Refine further
+                  </div>
+                )}
+                {renderFacet(r.facet, r.badge, r.answered)}
+              </React.Fragment>
+            ))}
+          </div>
         </aside>
 
         {/* ---------------- Results ---------------- */}

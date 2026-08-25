@@ -24,7 +24,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Route, GitBranch } from 'lucide-react';
-import { DeepDiveMenu } from '../common/DeepDiveMenu';
 import { StraiveMark } from '../brand/StraiveLogo';
 import { JourneyNarrative } from './JourneyNarrative';
 import { PipelineTrace } from './PipelineTrace';
@@ -58,7 +57,6 @@ export const IntelligencePanel: React.FC = () => {
               </p>
             </div>
           </div>
-          <DeepDiveMenu />
         </div>
 
         <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">

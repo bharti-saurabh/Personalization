@@ -1,11 +1,11 @@
 /**
- * The one row of demo scaffolding.
+ * The demo scaffolding: WHO we are simulating, and WHERE they are.
  *
- * This used to be two full-width strips stacked on each other - a scenario
- * selector and a page tracker - which together with the promo ticker, the
- * store header and the category nav put five bands of chrome above the fold.
- * They are one row now because they answer one question between them: WHO are
- * we simulating, and WHERE are they.
+ * The two questions sit on two lines rather than at opposite ends of one. The
+ * four page buttons are the storefront itself - home, catalog, product, cart -
+ * so they belong under the shopper they describe, reading left to right as the
+ * journey they represent. Pushed to the right-hand end of the shopper row they
+ * looked like an unrelated toolbar that happened to share the strip.
  *
  * The profile and propensity readout that used to sit on the right was dropped
  * rather than merged. It restated what the intelligence panel already says with
@@ -44,10 +44,12 @@ export const DemoStrip: React.FC = () => {
   };
 
   return (
-    <div className="shrink-0 bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between gap-4 overflow-x-auto scrollbar-none">
+    <div className="shrink-0 bg-white border-b border-slate-200 px-4 py-2 space-y-1.5">
       {/* WHO */}
-      <div className="flex items-center gap-2.5 shrink-0">
-        <span className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400 shrink-0">Shopper</span>
+      <div className="flex items-center gap-2.5 overflow-x-auto scrollbar-none">
+        <span className="w-16 shrink-0 text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+          Shopper
+        </span>
         <div className="flex items-center gap-0.5 bg-slate-100 p-0.5 rounded-full border border-slate-200">
           {scenarios.map((sc) => {
             const isSelected = selectedScenario.id === sc.id;
@@ -72,8 +74,14 @@ export const DemoStrip: React.FC = () => {
       </div>
 
       {/* WHERE. Steps completed so far are filled, which turns the row into a
-          progress indicator rather than four equally-weighted buttons. */}
-      <div className="flex items-center shrink-0">
+          progress indicator rather than four equally-weighted buttons. The
+          label column is the same width as the one above it, so the two rows
+          line up on a single left edge. */}
+      <div className="flex items-center gap-2.5 overflow-x-auto scrollbar-none">
+        <span className="w-16 shrink-0 text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+          Storefront
+        </span>
+        <div className="flex items-center">
         {STEPS.map((step, idx) => {
           const isActive = storefrontPage === step.id;
           const isPast = idx < stepIndex;
@@ -105,6 +113,7 @@ export const DemoStrip: React.FC = () => {
             </React.Fragment>
           );
         })}
+        </div>
       </div>
     </div>
   );

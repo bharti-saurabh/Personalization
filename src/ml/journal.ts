@@ -184,7 +184,7 @@ function intentRuns(i: BeatInput): ModelRun[] {
       score: row.probability,
       delta: prevIntent ? row.probability - deptProbOf(prevIntent, row.department) : undefined,
     })),
-    verdict: `${topDept.department} at ${pct(topDept.probability)}%, so the facet rail leads with ${intent.topFilters[0]}`,
+    verdict: `${topDept.department} at ${pct(topDept.probability)}%, so the facet rail opens on ${intent.topFilters[0]} and hands over to the funnel once three filters are set`,
   };
 
   return [teamRun, deptRun];

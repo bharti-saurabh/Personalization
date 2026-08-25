@@ -1,15 +1,14 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { AppBar } from './components/common/AppBar';
 import { Header } from './components/common/Header';
 import { DemoStrip } from './components/common/DemoStrip';
-import { DEEP_DIVE_BY_ID } from './components/common/DeepDiveMenu';
+import { DeepDiveRail, DEEP_DIVE_BY_ID } from './components/common/DeepDiveRail';
 import { StorefrontHome } from './components/storefront/StorefrontHome';
 import { ProductListingPage } from './components/storefront/ProductListingPage';
 import { ProductDetailPage } from './components/storefront/ProductDetailPage';
 import { CartPage } from './components/storefront/CartPage';
 import { IntelligencePanel } from './components/intelligence/IntelligencePanel';
-import { ArrowLeft } from 'lucide-react';
 
 // The storefront is what the demo opens on and it draws no charts. Everything
 // behind the deep-dive launcher is lazy so Recharts - by itself half the bundle -
@@ -25,9 +24,6 @@ const ModelEvidence = lazy(() =>
 );
 const RecommendationLab = lazy(() =>
   import('./components/intelligence/RecommendationLab').then((m) => ({ default: m.RecommendationLab }))
-);
-const BusinessImpactCalculator = lazy(() =>
-  import('./components/intelligence/BusinessImpactCalculator').then((m) => ({ default: m.BusinessImpactCalculator }))
 );
 const PersonalizationComparison = lazy(() =>
   import('./components/storefront/PersonalizationComparison').then((m) => ({ default: m.PersonalizationComparison }))
@@ -66,23 +62,16 @@ function StorefrontStage() {
  * side panel being visible.
  */
 function DeepDiveStage() {
-  const { navigationTab, setNavigationTab } = useApp();
+  const { navigationTab } = useApp();
   const meta = DEEP_DIVE_BY_ID[navigationTab];
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-      <div className="shrink-0 bg-slate-900 text-white px-4 py-2 flex items-center gap-3 border-b border-slate-800">
-        <button
-          onClick={() => setNavigationTab('experience')}
-          className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors border border-slate-700"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back to storefront
-        </button>
-        <div className="min-w-0">
-          <div className="text-xs font-extrabold uppercase tracking-wider truncate">{meta?.label ?? 'Deep Dive'}</div>
-          {meta?.blurb && <div className="text-[10px] text-slate-400 truncate">{meta.blurb}</div>}
-        </div>
+      {/* Title only. The way back used to be a button here as well; the left
+          rail carries it now, in the same place on every screen. */}
+      <div className="shrink-0 bg-slate-900 text-white px-4 py-2 border-b border-slate-800">
+        <div className="text-xs font-extrabold uppercase tracking-wider truncate">{meta?.label ?? 'Deep Dive'}</div>
+        {meta?.blurb && <div className="text-[10px] text-slate-400 truncate">{meta.blurb}</div>}
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -92,7 +81,6 @@ function DeepDiveStage() {
           {navigationTab === 'model_intelligence' && <ModelIntelligence />}
           {navigationTab === 'model_evidence' && <ModelEvidence />}
           {navigationTab === 'lab' && <RecommendationLab />}
-          {navigationTab === 'business_impact' && <BusinessImpactCalculator />}
           {navigationTab === 'architecture' && <ModelArchitecture />}
           {navigationTab === 'straive_contribution' && <StraiveContribution />}
         </Suspense>
@@ -154,12 +142,17 @@ function MainContent() {
 }
 
 export default function App() {
+  // The rail starts open. It is how you reach seven of the nine screens, and a
+  // navigator you have to discover is not a navigator.
+  const [railOpen, setRailOpen] = useState(true);
+
   return (
     <AppProvider>
       <div className="h-screen w-screen flex flex-col overflow-hidden bg-ink-950 font-sans antialiased text-slate-100">
         <AppBar />
         <Header />
         <div className="flex-1 flex min-h-0 overflow-hidden">
+          <DeepDiveRail open={railOpen} onToggle={() => setRailOpen((v) => !v)} />
           <MainContent />
         </div>
       </div>

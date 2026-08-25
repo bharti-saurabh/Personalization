@@ -146,7 +146,6 @@ export type NavigationTab =
   | 'model_intelligence'
   | 'model_evidence'
   | 'lab'
-  | 'business_impact'
   | 'architecture'
   | 'straive_contribution';
 
