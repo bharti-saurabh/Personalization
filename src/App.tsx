@@ -1,18 +1,19 @@
 import React, { Suspense, lazy } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/common/Header';
-import { LeftNav } from './components/common/LeftNav';
 import { ScenarioSelector } from './components/common/ScenarioSelector';
 import { JourneyTracker } from './components/common/JourneyTracker';
+import { DEEP_DIVE_BY_ID } from './components/common/DeepDiveMenu';
 import { StorefrontHome } from './components/storefront/StorefrontHome';
 import { ProductListingPage } from './components/storefront/ProductListingPage';
 import { ProductDetailPage } from './components/storefront/ProductDetailPage';
 import { CartPage } from './components/storefront/CartPage';
 import { IntelligencePanel } from './components/intelligence/IntelligencePanel';
+import { ArrowLeft } from 'lucide-react';
 
 // The storefront is what the demo opens on and it draws no charts. Everything
-// behind the other nav tabs is lazy so Recharts - by itself half the bundle -
-// stays off the first-paint path and loads when a tab is actually opened.
+// behind the deep-dive launcher is lazy so Recharts - by itself half the bundle -
+// stays off the first-paint path and loads when a screen is actually opened.
 const CustomerJourneyScreen = lazy(() =>
   import('./components/intelligence/CustomerJourneyScreen').then((m) => ({ default: m.CustomerJourneyScreen }))
 );
@@ -38,115 +39,121 @@ const StraiveContribution = lazy(() =>
   import('./components/intelligence/StraiveContribution').then((m) => ({ default: m.StraiveContribution }))
 );
 
-/** Brief hold while a lazy tab chunk arrives. */
+/** Brief hold while a lazy deep-dive chunk arrives. */
 const TabFallback: React.FC = () => (
   <div className="flex-1 flex items-center justify-center bg-slate-50 text-xs text-slate-500 font-mono">
     Loading module...
   </div>
 );
 
+/** The storefront itself - the only thing on the stage by default. */
+function StorefrontStage() {
+  const { storefrontPage } = useApp();
+  return (
+    <>
+      {storefrontPage === 'home' && <StorefrontHome />}
+      {storefrontPage === 'plp' && <ProductListingPage />}
+      {storefrontPage === 'pdp' && <ProductDetailPage />}
+      {storefrontPage === 'cart' && <CartPage />}
+    </>
+  );
+}
+
+/**
+ * A deep-dive screen takes over the stage rather than opening in the narrow
+ * side panel: every one of these is chart- or table-heavy and unreadable at
+ * 30% width. The bar above it is the only way back that does not depend on the
+ * side panel being visible.
+ */
+function DeepDiveStage() {
+  const { navigationTab, setNavigationTab } = useApp();
+  const meta = DEEP_DIVE_BY_ID[navigationTab];
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="shrink-0 bg-slate-900 text-white px-4 py-2 flex items-center gap-3 border-b border-slate-800">
+        <button
+          onClick={() => setNavigationTab('experience')}
+          className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors border border-slate-700"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to storefront
+        </button>
+        <div className="min-w-0">
+          <div className="text-xs font-extrabold uppercase tracking-wider truncate">{meta?.label ?? 'Deep Dive'}</div>
+          {meta?.blurb && <div className="text-[10px] text-slate-400 truncate">{meta.blurb}</div>}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <Suspense fallback={<TabFallback />}>
+          {navigationTab === 'journey' && <CustomerJourneyScreen />}
+          {navigationTab === 'comparison' && <PersonalizationComparison />}
+          {navigationTab === 'model_intelligence' && <ModelIntelligence />}
+          {navigationTab === 'model_evidence' && <ModelEvidence />}
+          {navigationTab === 'lab' && <RecommendationLab />}
+          {navigationTab === 'business_impact' && <BusinessImpactCalculator />}
+          {navigationTab === 'architecture' && <ModelArchitecture />}
+          {navigationTab === 'straive_contribution' && <StraiveContribution />}
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
 function MainContent() {
-  const { navigationTab, storefrontPage, showMLPanel, toggleMLPanel } = useApp();
+  const { navigationTab, showMLPanel, toggleMLPanel } = useApp();
+  const isStorefront = navigationTab === 'experience';
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-100">
-      {/* Experience Demo Tab Main Layout */}
-      {navigationTab === 'experience' && (
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {/* Top Scenario Selector */}
+      {/* Demo chrome: which shopper we are simulating, and where they are. Kept
+          above the split so it reads as a control strip for the whole stage. */}
+      {isStorefront && (
+        <>
           <ScenarioSelector />
-
-          {/* Horizontal Journey Stepper */}
           <JourneyTracker />
+        </>
+      )}
 
-          {/* Two-Pane Main Split */}
-          <div className="flex-1 flex min-h-0 overflow-hidden">
-            {/* Left Storefront Canvas */}
-            <main
-              className={`flex-1 overflow-y-auto transition-all duration-300 ${
-                showMLPanel ? 'w-full lg:w-[68%]' : 'w-full'
-              }`}
-            >
-              {storefrontPage === 'home' && <StorefrontHome />}
-              {storefrontPage === 'plp' && <ProductListingPage />}
-              {storefrontPage === 'pdp' && <ProductDetailPage />}
-              {storefrontPage === 'cart' && <CartPage />}
-            </main>
-
-            {/* Right ML Intelligence Trace Panel */}
-            {showMLPanel && (
-              <aside className="hidden lg:block w-[32%] shrink-0 h-full overflow-hidden">
-                <IntelligencePanel />
-              </aside>
-            )}
-          </div>
-
-          {/* Floating AI Explanation Layer Pill Button (when ML Panel is closed) */}
-          {!showMLPanel && (
-            <button
-              onClick={toggleMLPanel}
-              className="fixed bottom-4 right-4 z-50 bg-slate-950 text-white hover:bg-indigo-900 px-4 py-2.5 rounded-full shadow-2xl border border-slate-700 flex items-center space-x-2.5 transition-all hover:scale-105 active:scale-95 group font-sans"
-              title="Open AI Explanation Layer"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-xs font-bold font-mono tracking-wide text-slate-200 group-hover:text-white">
-                💡 AI Explanation Layer
-              </span>
-            </button>
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* Shopping stage. Takes the full width when the trace panel is hidden. */}
+        <main
+          className={`flex-1 flex flex-col min-w-0 overflow-hidden transition-all duration-300 ${
+            showMLPanel ? 'lg:w-[70%]' : 'w-full'
+          }`}
+        >
+          {isStorefront ? (
+            <div className="flex-1 overflow-y-auto">
+              <StorefrontStage />
+            </div>
+          ) : (
+            <DeepDiveStage />
           )}
-        </div>
-      )}
-
-      {/* Other Navigation Screens - all lazily loaded */}
-      <Suspense fallback={navigationTab === 'experience' ? null : <TabFallback />}>
-      {navigationTab === 'journey' && (
-        <main className="flex-1 overflow-y-auto">
-          <CustomerJourneyScreen />
         </main>
-      )}
 
-      {navigationTab === 'comparison' && (
-        <main className="flex-1 overflow-y-auto">
-          <PersonalizationComparison />
-        </main>
-      )}
+        {/* Behind-the-scenes panel: what the models just did, and the launcher
+            for the deeper screens. */}
+        {showMLPanel && (
+          <aside className="hidden lg:block w-[30%] shrink-0 h-full overflow-hidden">
+            <IntelligencePanel />
+          </aside>
+        )}
+      </div>
 
-      {navigationTab === 'model_intelligence' && (
-        <main className="flex-1 overflow-y-auto">
-          <ModelIntelligence />
-        </main>
+      {/* Way back in when the panel is hidden. */}
+      {!showMLPanel && (
+        <button
+          onClick={toggleMLPanel}
+          className="fixed bottom-4 right-4 z-50 bg-slate-950 text-white hover:bg-indigo-900 px-4 py-2.5 rounded-full shadow-2xl border border-slate-700 flex items-center space-x-2.5 transition-all hover:scale-105 active:scale-95 group font-sans"
+          title="Show what the models are doing"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-xs font-bold font-mono tracking-wide text-slate-200 group-hover:text-white">
+            Behind the Scenes
+          </span>
+        </button>
       )}
-
-      {navigationTab === 'model_evidence' && (
-        <main className="flex-1 overflow-y-auto">
-          <ModelEvidence />
-        </main>
-      )}
-
-      {navigationTab === 'lab' && (
-        <main className="flex-1 overflow-y-auto">
-          <RecommendationLab />
-        </main>
-      )}
-
-      {navigationTab === 'business_impact' && (
-        <main className="flex-1 overflow-y-auto">
-          <BusinessImpactCalculator />
-        </main>
-      )}
-
-      {navigationTab === 'architecture' && (
-        <main className="flex-1 overflow-y-auto">
-          <ModelArchitecture />
-        </main>
-      )}
-
-      {navigationTab === 'straive_contribution' && (
-        <main className="flex-1 overflow-y-auto">
-          <StraiveContribution />
-        </main>
-      )}
-      </Suspense>
     </div>
   );
 }
@@ -157,7 +164,6 @@ export default function App() {
       <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-950 font-sans antialiased text-slate-100">
         <Header />
         <div className="flex-1 flex min-h-0 overflow-hidden">
-          <LeftNav />
           <MainContent />
         </div>
       </div>

@@ -12,6 +12,7 @@ import {
   ComplementMatch,
   DecisionTrace,
   TeamId,
+  League,
 } from '../types';
 import { SCENARIOS, findAnchorProduct } from '../data/scenarios';
 import { getDataset } from '../sim/dataset';
@@ -54,6 +55,8 @@ interface AppContextType {
   setActiveTeamOverride: (team: TeamId | null) => void;
   activeDeptFilter: string | null;
   setActiveDeptFilter: (dept: string | null) => void;
+  activeLeagueFilter: League | null;
+  setActiveLeagueFilter: (league: League | null) => void;
   lastModelFeedback: string | null;
 
   // Live ML Engine Outputs
@@ -101,6 +104,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [userEvents, setUserEvents] = useState<UserEvent[]>(SCENARIOS[0].recentEvents);
   const [activeTeamOverride, setActiveTeamOverride] = useState<TeamId | null>(null);
   const [activeDeptFilter, setActiveDeptFilter] = useState<string | null>(null);
+  const [activeLeagueFilter, setActiveLeagueFilter] = useState<League | null>(null);
   const [lastModelFeedback, setLastModelFeedback] = useState<string | null>(null);
   const [activeExplainedProduct, setActiveExplainedProduct] = useState<Product | null>(null);
 
@@ -112,6 +116,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUserEvents(found.recentEvents);
       setActiveTeamOverride(null);
       setActiveDeptFilter(null);
+      setActiveLeagueFilter(null);
       // Anchor each scenario on a representative generated product, resolved by
       // predicate rather than by id - catalog ids move with the generator seed.
       if (found.id === 'hot_market') {
@@ -246,6 +251,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTeamOverride,
         activeDeptFilter,
         setActiveDeptFilter,
+        activeLeagueFilter,
+        setActiveLeagueFilter,
         lastModelFeedback,
         intentPrediction,
         similarityMatches,

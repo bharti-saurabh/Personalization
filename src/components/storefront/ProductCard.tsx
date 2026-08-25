@@ -1,6 +1,6 @@
 import React from 'react';
 import { Product } from '../../types';
-import { Star, ShoppingBag, Sparkles, Truck } from 'lucide-react';
+import { Star, Sparkles } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProductImage } from './ProductImage';
 
@@ -11,136 +11,128 @@ interface ProductCardProps {
   badgeType?: 'personalized' | 'similarity' | 'complement';
 }
 
-export const ProductCard: React.FC<ProductCardProps> = ({
-  product,
-  onSelect,
-  badgeText,
-  badgeType,
-}) => {
+/**
+ * Five-star rating strip. The catalog stores a fractional rating, so the last
+ * lit star is clipped to the remainder rather than rounded - rounding 4.2 up to
+ * five full stars would overstate a number that is printed right next to it.
+ */
+const Stars: React.FC<{ rating: number }> = ({ rating }) => {
+  const pct = Math.max(0, Math.min(100, (rating / 5) * 100));
+  return (
+    <span className="relative inline-flex shrink-0" aria-label={`${rating} out of 5`}>
+      <span className="flex text-slate-300">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <Star key={i} className="h-3 w-3 fill-current" />
+        ))}
+      </span>
+      <span className="absolute inset-0 overflow-hidden" style={{ width: `${pct}%` }}>
+        <span className="flex text-amber-400">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <Star key={i} className="h-3 w-3 fill-current" />
+          ))}
+        </span>
+      </span>
+    </span>
+  );
+};
+
+export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, badgeText, badgeType }) => {
   const { addToCart } = useApp();
 
+  const sale = product.salePrice;
+  const pctOff = sale ? Math.round(((product.price - sale) / product.price) * 100) : 0;
+
   return (
-    <div className="bg-white rounded-lg border border-slate-200 shadow-xs hover:shadow-lg hover:border-slate-300 transition-all duration-200 flex flex-col justify-between overflow-hidden group font-sans">
-      <div>
-        {/* Merchandise Visual Thumbnail */}
-        <div
-          onClick={() => onSelect(product)}
-          className="relative h-48 p-3.5 flex flex-col justify-between cursor-pointer overflow-hidden"
-        >
-          {/* Procedurally drawn merchandise render - see ProductImage.tsx */}
-          <ProductImage
-            product={product}
-            className="absolute inset-0 h-full w-full transition-transform duration-300 group-hover:scale-105"
-          />
+    <div className="bg-white rounded-lg border border-slate-200 hover:border-slate-400 hover:shadow-lg transition-all duration-200 flex flex-col overflow-hidden group font-sans">
+      {/* Merchandise visual */}
+      <div
+        onClick={() => onSelect(product)}
+        className="relative aspect-square bg-slate-50 cursor-pointer overflow-hidden"
+      >
+        {/* Procedurally drawn merchandise render - see ProductImage.tsx */}
+        <ProductImage
+          product={product}
+          className="absolute inset-0 h-full w-full transition-transform duration-300 group-hover:scale-105"
+        />
 
-          {/* Top Badges Row */}
-          {/* Wraps rather than clips: on a narrow grid "EAGLES" + "BEST SELLER"
-              cannot share a line, and a cut-off badge looks like a bug. */}
-          <div className="flex flex-wrap justify-between items-start z-10 w-full gap-1">
-            <span className="bg-slate-950/90 backdrop-blur text-white font-extrabold text-[10px] px-2 py-0.5 rounded tracking-wide border border-slate-700/60 uppercase whitespace-nowrap shrink-0">
-              {product.team}
+        {/* Promo flag, top-left. A percentage beats the word "Sale": it is the
+            thing a shopper is actually scanning for. */}
+        <div className="absolute top-0 left-0 z-10 flex flex-col items-start gap-1 p-2">
+          {sale ? (
+            <span className="bg-red-600 text-white font-black text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide">
+              {pctOff}% OFF
             </span>
-
-            {badgeText ? (
-              <span
-                className={`text-[10px] font-extrabold px-2 py-0.5 rounded shadow-sm flex items-center gap-1 whitespace-nowrap shrink-0 ${
-                  badgeType === 'complement'
-                    ? 'bg-amber-500 text-slate-950 font-mono'
-                    : badgeType === 'similarity'
-                    ? 'bg-indigo-600 text-white font-mono'
-                    : 'bg-emerald-600 text-white font-mono'
-                }`}
-              >
-                <Sparkles className="h-3 w-3" />
-                {badgeText}
-              </span>
-            ) : product.badge ? (
-              <span className="bg-red-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded uppercase tracking-wider shadow-sm whitespace-nowrap shrink-0">
-                {product.badge}
-              </span>
-            ) : (
-              <span className="bg-slate-800/80 text-slate-200 font-bold text-[9px] px-1.5 py-0.5 rounded uppercase">
-                OFFICIAL
-              </span>
-            )}
-          </div>
-
-          {/* Bottom Stock Badge */}
-          <div className="flex justify-between items-center z-10 text-[10px] font-medium">
-            <span className="bg-white/85 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-slate-300/70">
-              {product.gender}
+          ) : product.badge ? (
+            <span className="bg-slate-900 text-white font-black text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide">
+              {product.badge}
             </span>
-            <span className="bg-emerald-50/95 text-emerald-800 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold border border-emerald-600/40">
-              {product.inventoryStatus}
+          ) : null}
+
+          {badgeText && (
+            <span
+              className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide flex items-center gap-1 font-mono ${
+                badgeType === 'complement'
+                  ? 'bg-amber-400 text-slate-950'
+                  : badgeType === 'similarity'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-emerald-600 text-white'
+              }`}
+            >
+              <Sparkles className="h-2.5 w-2.5" />
+              {badgeText}
             </span>
-          </div>
-        </div>
-
-        {/* Product Meta Body */}
-        <div className="p-3">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            {product.league} • {product.subdepartment}
-          </div>
-
-          <h3
-            onClick={() => onSelect(product)}
-            className="text-xs font-bold text-slate-900 line-clamp-2 hover:text-red-600 transition-colors cursor-pointer leading-snug h-8"
-            title={product.name}
-          >
-            {product.name}
-          </h3>
-
-          {/* Rating & Shipping Tag */}
-          <div className="flex items-center justify-between my-2 text-xs">
-            <div className="flex items-center space-x-1">
-              <div className="flex text-amber-400">
-                <Star className="h-3 w-3 fill-current" />
-              </div>
-              <span className="font-bold text-slate-800 text-[11px]">{product.rating}</span>
-              <span className="text-[10px] text-slate-400">({product.reviewCount})</span>
-            </div>
-            <div className="flex items-center text-[10px] text-emerald-700 font-bold gap-0.5">
-              <Truck className="h-3 w-3 text-emerald-600" />
-              <span>Ships Fast</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer Price & Actions */}
-      {/* The controls are fixed-width and the price is not, so the price is the
-          side that gives: a discounted item shows two prices and would otherwise
-          push the ADD button off the edge of a narrow card. */}
-      <div className="p-3 pt-2 border-t border-slate-100 flex items-center justify-between gap-2 mt-1 bg-slate-50/50">
-        {/* Two prices stack rather than sit side by side: on a four-up grid the
-            was-price loses its last digits if the pair has to share a line with
-            the ADD button, and a truncated price reads as a rendering bug. */}
-        <div className="min-w-0">
-          {product.salePrice ? (
-            <div className="leading-tight">
-              <div className="text-[10px] text-slate-400 line-through whitespace-nowrap">${product.price.toFixed(2)}</div>
-              <div className="text-sm font-black text-red-600 whitespace-nowrap">${product.salePrice.toFixed(2)}</div>
-            </div>
-          ) : (
-            <span className="text-sm font-black text-slate-900 whitespace-nowrap">${product.price.toFixed(2)}</span>
           )}
         </div>
 
-        {/* No separate "view details" control: the whole thumbnail above is
-            already that button, and dropping it buys the width a discounted
-            price needs. */}
-        <div className="flex items-center shrink-0">
-          <button
-            onClick={() => addToCart(product, 'L')}
-            className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs px-2.5 py-1.5 rounded-md transition-colors flex items-center space-x-1 uppercase tracking-wider"
-            title="Add to Cart"
-          >
-            <ShoppingBag className="h-3.5 w-3.5" />
-            <span>ADD</span>
-          </button>
+        {product.inventoryStatus === 'Low Stock' && (
+          <span className="absolute bottom-2 left-2 z-10 bg-amber-100 text-amber-900 border border-amber-400 font-bold text-[9px] px-1.5 py-0.5 rounded uppercase">
+            Almost gone
+          </span>
+        )}
+        {product.inventoryStatus === 'Pre-Order' && (
+          <span className="absolute bottom-2 left-2 z-10 bg-slate-900 text-white font-bold text-[9px] px-1.5 py-0.5 rounded uppercase">
+            Pre-Order
+          </span>
+        )}
+      </div>
+
+      {/* Copy block */}
+      <div className="p-2.5 flex flex-col flex-1">
+        <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest truncate">{product.brand}</div>
+
+        <h3
+          onClick={() => onSelect(product)}
+          className="text-[11px] font-semibold text-slate-800 leading-snug line-clamp-2 hover:text-red-600 cursor-pointer mt-0.5 min-h-[2rem]"
+          title={product.name}
+        >
+          {product.name}
+        </h3>
+
+        <div className="flex items-center gap-1 mt-1">
+          <Stars rating={product.rating} />
+          <span className="text-[10px] text-slate-500 font-mono">({product.reviewCount.toLocaleString()})</span>
         </div>
+
+        {/* Price. Sale prices lead in red with the original struck through
+            beside them, which is the convention shoppers already read. */}
+        <div className="mt-1.5 flex items-baseline gap-1.5 flex-wrap">
+          {sale ? (
+            <>
+              <span className="text-sm font-black text-red-600">${sale.toFixed(2)}</span>
+              <span className="text-[10px] text-slate-400 line-through">${product.price.toFixed(2)}</span>
+            </>
+          ) : (
+            <span className="text-sm font-black text-slate-900">${product.price.toFixed(2)}</span>
+          )}
+        </div>
+
+        <button
+          onClick={() => addToCart(product, 'L')}
+          className="mt-2 w-full bg-slate-900 hover:bg-red-600 text-white font-black text-[10px] uppercase tracking-widest py-2 rounded transition-colors"
+        >
+          Add to Cart
+        </button>
       </div>
     </div>
   );
 };
-

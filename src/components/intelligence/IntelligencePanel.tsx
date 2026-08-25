@@ -19,6 +19,7 @@ import {
   Play,
   Check,
 } from 'lucide-react';
+import { DeepDiveMenu } from '../common/DeepDiveMenu';
 
 export const IntelligencePanel: React.FC = () => {
   const {
@@ -136,6 +137,7 @@ export const IntelligencePanel: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-2">
+          <DeepDiveMenu />
           <button
             onClick={runTraceSequence}
             disabled={isAnalyzing}

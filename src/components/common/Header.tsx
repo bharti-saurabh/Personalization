@@ -12,7 +12,7 @@ import {
   Tag,
   Zap,
 } from 'lucide-react';
-import { Department } from '../../types';
+import { Department, League } from '../../types';
 
 export const Header: React.FC = () => {
   const {
@@ -30,6 +30,7 @@ export const Header: React.FC = () => {
     setNavigationTab,
     setActiveDeptFilter,
     setActiveTeamOverride,
+    setActiveLeagueFilter,
     activeTeamOverride,
     intentPrediction,
   } = useApp();
@@ -56,15 +57,25 @@ export const Header: React.FC = () => {
     recordEvent(`Searched & Selected Product: ${p.name}`);
   };
 
-  const handleCategoryClick = (dept?: Department, team?: string) => {
+  const handleCategoryClick = (dept?: Department) => {
     setNavigationTab('experience');
     setStorefrontPage('plp');
     setActiveDeptFilter(dept || null);
-    if (team) {
-      setActiveTeamOverride(team as any);
-    } else if (!dept) {
+    if (!dept) {
       setActiveTeamOverride(null);
+      setActiveLeagueFilter(null);
     }
+  };
+
+  // League links used to set a team override, and two of them named teams the
+  // simulated catalog does not contain - so MLB and NHL browsed to an empty
+  // grid. They now filter on the axis they actually describe.
+  const handleLeagueClick = (league: League) => {
+    setNavigationTab('experience');
+    setStorefrontPage('plp');
+    setActiveDeptFilter(null);
+    setActiveTeamOverride(null);
+    setActiveLeagueFilter(league);
   };
 
   return (
@@ -217,30 +228,15 @@ export const Header: React.FC = () => {
               ALL GEAR
             </button>
             <span className="text-slate-700">|</span>
-            <button
-              onClick={() => handleCategoryClick(undefined, 'Eagles')}
-              className="hover:text-red-400 transition-colors uppercase text-[11px]"
-            >
-              NFL
-            </button>
-            <button
-              onClick={() => handleCategoryClick(undefined, 'Yankees')}
-              className="hover:text-red-400 transition-colors uppercase text-[11px]"
-            >
-              MLB
-            </button>
-            <button
-              onClick={() => handleCategoryClick(undefined, 'Lakers')}
-              className="hover:text-red-400 transition-colors uppercase text-[11px]"
-            >
-              NBA
-            </button>
-            <button
-              onClick={() => handleCategoryClick(undefined, 'Rangers')}
-              className="hover:text-red-400 transition-colors uppercase text-[11px]"
-            >
-              NHL
-            </button>
+            {(['NFL', 'NBA', 'MLB'] as League[]).map((lg) => (
+              <button
+                key={lg}
+                onClick={() => handleLeagueClick(lg)}
+                className="hover:text-red-400 transition-colors uppercase text-[11px]"
+              >
+                {lg}
+              </button>
+            ))}
             <span className="text-slate-700">|</span>
             <button
               onClick={() => handleCategoryClick('Jerseys')}
