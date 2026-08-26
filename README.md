@@ -41,6 +41,8 @@ Other scripts:
 | `npm run sim:eval` | Offline evaluation of all three engines against popularity baselines |
 | `npm run sim:inspect` | Dumps catalog and population statistics for sanity-checking the simulator |
 | `npm run sim:imagery` | Renders the procedural product artwork |
+| `npm run sim:market` | Fires a trade into the world and diffs it against the quiet world - the source of every market-event figure quoted in the docs |
+| `npm test` | Unit tests for `src/ml` and `src/sim`, including the market-event isolation checks |
 | `npm run lint` | `tsc --noEmit` |
 | `npm run build` | Production build (code-split, for a static host) |
 | `npm run build:single` | One self-contained HTML file in `dist-single/` - runs from `file://`, no server |
@@ -76,7 +78,8 @@ the right shows the seven-step decision sequence for whatever is currently on sc
 ```
 src/
   sim/         The simulated world: taxonomy, catalog generator, population
-               and behaviour model, seeded RNG. Deterministic.
+               and behaviour model, seeded RNG, and the season clock that
+               carries the calendar and the market-event log. Deterministic.
   ml/          The engines: intent, similarity, complement, shared embeddings,
                and the offline evaluation harness.
   components/

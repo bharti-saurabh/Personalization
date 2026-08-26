@@ -1,5 +1,5 @@
 /**
- * The decision stream: one entry per thing the shopper did.
+ * The decision stream: one entry per thing that happened.
  *
  * This joins two records that were kept separately and on purpose. The journal
  * knows what RAN - which engines fired, what they scored, which gate opened,
@@ -8,6 +8,17 @@
  * story: an engine that ran and wrote nothing is noise, and a field that moved
  * with no surface behind it is a number nobody can act on. Joined on the event
  * id, they are a decision.
+ *
+ * MARKET EVENTS ARE THE EXCEPTION, AND THEY BELONG HERE ANYWAY.
+ *
+ * Every other entry in this stream traces to something the shopper did, and the
+ * join key is the id of that user event. A trade has no user event behind it -
+ * the shopper was standing still when the world moved under them. It gets an
+ * entry regardless, with `eventId: null` and no field writes, because a stream
+ * that only shows shopper-caused changes would leave the single most visible
+ * re-rank in the demo unexplained. The three-part reading still holds: the
+ * mechanism is what was rebuilt, the consequence is what moved on screen, and
+ * the number counts products and milliseconds.
  *
  * THE READING RULE, made structural rather than editorial.
  *
@@ -28,7 +39,7 @@
  */
 
 import { StorefrontPage } from '../types';
-import type { JournalBeat, ModelRun, SurfaceChange } from './journal';
+import type { JournalBeat, MarketBeat, ModelRun, SurfaceChange } from './journal';
 import type { ProfileDelta, VisitorProfile } from './profile';
 
 /** The three-part reading. Order is the contract; do not render out of order. */
@@ -64,6 +75,8 @@ export interface DecisionEntry {
   /** The full input vector, for the expanded view. */
   features: FeatureRow[];
   personalizationOn: boolean;
+  /** Present only when the world itself moved. See the note in the header. */
+  market?: MarketBeat;
 }
 
 const PAGE_LABEL: Record<StorefrontPage, string> = {
@@ -132,6 +145,19 @@ function list(items: string[], max = 3): string {
  * reproduce the write by hand.
  */
 function mechanismOf(beat: JournalBeat, writes: ProfileDelta[]): string {
+  /*
+   * A market beat is the only kind whose cause is outside the shopper, so it is
+   * also the only one where the mechanism has to describe the world rather than
+   * the fold. It says what was REBUILT, in the order it was rebuilt, because
+   * "the recommendations changed" is a claim anyone can make and "the population
+   * was re-simulated and the co-order graph re-estimated from the sessions that
+   * produced" is a claim a client's data scientist can go and check.
+   */
+  if (beat.kind === 'market' && beat.market) {
+    const m = beat.market;
+    return `${m.headline}. The world was rebuilt from the event log rather than patched: the catalog was regenerated and re-badged, the simulated population re-drew its club and category intent against the new market, and all three co-occurrence graphs were re-estimated from the sessions that produced. ${m.detail}`;
+  }
+
   if (beat.kind === 'session') {
     const seeds = writes.filter((w) => w.kind === 'seed');
     if (seeds.length) {
@@ -194,6 +220,22 @@ function consequenceOf(beat: JournalBeat): string {
   const changed = beat.presented.filter((s) => !s.isFallback);
   const fallbacks = beat.presented.filter((s) => s.isFallback);
 
+  if (beat.kind === 'market' && beat.market) {
+    const m = beat.market;
+    const parts: string[] = [];
+    if (m.moved > 0) {
+      parts.push(
+        `${m.moved} product${m.moved === 1 ? '' : 's'} changed club in place - same id, new badge and colourway - so a shopper holding one in their cart still has it`
+      );
+    }
+    if (m.lifted > 0) parts.push(`${m.lifted} rose in the ranking`);
+    if (m.damped > 0) parts.push(`${m.damped} fell`);
+    const surfaces = changed.length
+      ? `${list(changed.map((s) => s.surface))} re-ranked against the new catalog.`
+      : `The open surfaces re-ranked against the new catalog.`;
+    return parts.length ? `${parts.join(', ')}. ${surfaces}` : surfaces;
+  }
+
   if (!beat.personalizationOn) {
     return `Nothing on the storefront moved: with personalization off every surface serves its merchandised default, which is the comparison this switch exists to make.`;
   }
@@ -220,6 +262,16 @@ function consequenceOf(beat: JournalBeat): string {
  */
 function numberOf(beat: JournalBeat, writes: ProfileDelta[]): string {
   const bits: string[] = [];
+
+  if (beat.kind === 'market' && beat.market) {
+    const m = beat.market;
+    bits.push(`${m.touched} product${m.touched === 1 ? '' : 's'} rewritten`);
+    if (m.moved > 0) bits.push(`${m.moved} re-badged`);
+    const surfaces = beat.presented.filter((s) => !s.isFallback).length;
+    if (surfaces) bits.push(`${surfaces} surface${surfaces === 1 ? '' : 's'} re-ranked`);
+    bits.push(`${m.rebuildMs}ms to rebuild the world`);
+    return `${bits.join(' \u00b7 ')}.`;
+  }
 
   const fields = fieldsTouched(writes).length;
   if (fields) bits.push(`${fields} field${fields === 1 ? '' : 's'} written`);
@@ -253,6 +305,20 @@ function featuresOf(beat: JournalBeat, writes: ProfileDelta[], profile: VisitorP
 
   rows.push({ group: 'Event', label: 'Page', value: PAGE_LABEL[beat.page] });
   rows.push({ group: 'Event', label: 'Action', value: beat.headline });
+
+  // The market pass, made inspectable. A client's merchandising lead should be
+  // able to open this and see the arithmetic that lifted their category, rather
+  // than being told the catalog "responded to the news".
+  if (beat.market) {
+    const m = beat.market;
+    rows.push({ group: 'Market event', label: 'Kind', value: m.kind });
+    rows.push({ group: 'Market event', label: 'Clock after', value: m.at });
+    rows.push({ group: 'Market event', label: 'Products rewritten', value: String(m.touched), weight: m.touched });
+    rows.push({ group: 'Market event', label: 'Changed club', value: String(m.moved), weight: m.moved });
+    rows.push({ group: 'Market event', label: 'Popularity raised', value: String(m.lifted), weight: m.lifted });
+    rows.push({ group: 'Market event', label: 'Popularity cut', value: String(m.damped), weight: m.damped });
+    rows.push({ group: 'Market event', label: 'World rebuild', value: `${m.rebuildMs}ms` });
+  }
   if (beat.signalWeight !== undefined) {
     rows.push({ group: 'Event', label: 'Decayed weight', value: beat.signalWeight.toFixed(3), weight: beat.signalWeight });
   }
@@ -339,6 +405,7 @@ export function buildDecisions(
       },
       features: featuresOf(beat, writes, profile),
       personalizationOn: beat.personalizationOn,
+      market: beat.market,
     };
   });
 }

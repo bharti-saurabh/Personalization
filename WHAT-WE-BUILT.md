@@ -67,12 +67,21 @@ Multi-Team Sports Shopper, Anonymous First-Time Visitor, Hot-Market Event Shoppe
 Low-Confidence Customer who deliberately *fails* the confidence gate — because a demo
 that only shows the happy path is not showing the system.
 
+A **Market deck** sits on the same control strip: seven buttons that fire a real market
+event into the simulated world — a trade, an injury, a championship, a kit launch. Pressing
+one rebuilds the catalog, the population and the co-order graphs, re-ranks every open
+surface, and writes an entry into the decision stream. See §7.
+
 ### The intelligence panel (always on the right)
 
 A running account of the session, not a static readout. For every decision it shows:
 which models ran, what went in, what the posterior was, which rule fired, what got put
-on screen, and what changed since the last event. Two tabs — **Session Story** (the
-narrative) and **Pipeline** (the trace).
+on screen, and what changed since the last event. Three tabs — **Profile** (what the
+system currently believes about this shopper, every field with its confidence, source and
+decay constant), **Decisions** (the delta stream: triggering event, models that ran, fields
+written, surfaces re-ranked, expandable to the full feature vector), and **Experience**
+(the effort ledger). Every Decisions entry reads mechanism, then consequence, then number —
+no entry ends on a posterior.
 
 ### The deep dives (7 screens)
 
@@ -303,7 +312,117 @@ no external asset dependency and works with the network unplugged.
 
 ---
 
-## 7. Offline results
+## 7. The world has a clock
+
+Until now the simulated world was a still photograph. It had a date baked into it —
+September, mid-NFL-season — but that date was a frozen constant in the taxonomy, and
+nothing could move it. `src/sim/clock.ts` makes time an **injectable parameter** instead,
+and then uses that to let the demo do the thing sports commerce actually has to survive:
+**the market changes under you, mid-session.**
+
+### A clock, and what hangs off it
+
+```ts
+interface SimClock { month: number; year: number; events: readonly MarketEvent[] }
+```
+
+Three things, all frozen. `SIM_MONTH` and `LEAGUE_SEASONALITY` moved out of
+`taxonomy.ts` — taxonomy is the register of what the world is made *of*, not what time
+it is. Every function that used to read those constants now takes a trailing
+`clock: SimClock = activeClock()` parameter, so **the ambient clock is a default, never a
+dependency**. An evaluation arm that passes its own clock shares nothing with the app.
+
+The calendar drives a per-league seasonality curve — NFL peaks in September while the NBA
+is still in preseason and MLB is in its pennant race — and a `phaseOf()` reading that is
+relative to each league's *own* curve, because merchandising decisions are made per league.
+
+### Seven market events
+
+Each has a defined effect on **both** the catalog and the population, decaying
+exponentially toward neutral on its own half-life:
+
+| Event | Player | Club | Departments | Half-life |
+| --- | --- | --- | --- | --- |
+| `TRADE` | ×2.4 | ×1.3 new, ×0.9 old | Jerseys ×1.55, T-shirts ×1.15 | 2 mo |
+| `INJURY` | ×0.5 | ×0.93 | — | weeks out ÷ 4.3 |
+| `PLAYOFF_WIN` | — | ×1.4 | Hats ×1.5, T-shirts ×1.35, Jerseys ×1.15 | 1.5 mo |
+| `CHAMPIONSHIP` | — | ×1.95 | Hats ×1.8, T-shirts ×1.6, Collectibles ×1.5 | 6 mo |
+| `NEW_SIGNING` | ×1 + 1.6·draw | ×1.2 | Jerseys ×1.4 | 3 mo |
+| `RETIREMENT` | ×1.7 | ×1.05 | Collectibles ×1.6, Jerseys ×1.2 | 2 mo |
+| `KIT_LAUNCH` | — | ×1.25 | Jerseys ×1.6 | 4 mo |
+
+Firing one moves the clock, drops the `getDataset()` memo, bumps the world version — which
+`getModels()` already keys off — and notifies the React tree. That is the invalidation path
+built in the previous PR, used for the first time by something that actually needs it.
+
+### The trade, measured
+
+`TRADE` is built properly rather than sketched. One keystroke on the Market deck, and —
+these are measured figures, not asserted ones; run `npm run sim:market` to reproduce them:
+
+**The player moves.** 12 products are rewritten in place — club, league, title, colourway,
+shirt number — while **keeping their product ids**, so a shopper holding the traded jersey
+in their cart still holds a product the catalog contains. That constraint is why the event
+is a post-generation rewrite rather than the cleaner roster-fold-then-generate design.
+
+**Jersey demand transfers with him.**
+
+| | Before | After | |
+| --- | --- | --- | --- |
+| Jalen Hurts orders | 187 | 228 | **+22%** |
+| …booked under Eagles | 187 | **0** | |
+| …booked under Cowboys | **0** | 228 | |
+| Cowboys jersey orders | 382 | 653 | **+71%** |
+| Eagles jersey orders | 415 | 368 | −11% |
+
+**The population moves too, not just the shelf.** Session focus shifts Cowboys
+20.4% → 23.3% and Eagles 20.9% → 19.8%. This is the half of the effect that is easy to
+skip: `teamDemand` enters the shopper's focus draw, so the event changes *who shops for
+what*, not merely how things are labelled.
+
+**Co-order priors recompute.** For the sample moved jersey, the co-order mass flips from
+100% Eagles neighbours to 100% Cowboys neighbours. The graph is rebuilt from re-simulated
+behaviour, so this is a genuine recomputation and not a relabelling.
+
+**Everything else re-ranks.** 289 products carry a `marketFlag` (163 lifted, 126 damped),
+open surfaces re-rank, the PDP and cart re-bind to the fresh objects, and a market entry
+lands in the decision stream — marked *not shopper-caused*, since it is the one entry in
+that stream that no shopper action produced. Cost: ~5.9s for a full world rebuild.
+
+### One thing the probe caught
+
+The first version applied lifts as `min(100, popularity × lift)`. Measuring it showed a
+trade collapsing **all 163 Dallas products to exactly 100** — one distinct popularity value
+across the whole club. The assortment the event had just made interesting became the one
+with no internal ranking signal at all.
+
+Upward lifts now compress the **headroom** instead: a product at 87 with a 2× lift closes
+half its gap to 93.5, one at 95 closes to 97.5. Strictly order-preserving, never reaches
+the ceiling, identical to the old form at lift = 1. Distinct values across the club went
+1 → 17, and the demand transfer strengthened as a result (Cowboys jerseys +58% → +71%).
+This is the argument for the probe existing at all — the bug was invisible on screen and
+obvious in one column of numbers.
+
+### Events cannot leak between simulation arms
+
+Asserted as a runnable check, not a paragraph — `src/sim/clock.test.ts`, 9 tests. There
+were three routes by which a fired event could contaminate a second arm, and each is closed
+structurally rather than by discipline:
+
+| Leak route | Closed by |
+| --- | --- |
+| Mutable catalog array shared between arms | `applyMarketEvents` clones every product it touches |
+| Roster mutated in place by a trade | `rosterAt` folds into a fresh table; `TEAMS` is never written |
+| Seasonality curve written through | `LEAGUE_SEASONALITY` frozen at both levels — the test asserts a `TypeError` |
+
+The end-to-end test builds two complete worlds from two clocks and asserts they disagree
+down to the co-order graph while `activeClock()` is untouched by either. `npm test` is
+29/29 green; `npm run sim:eval` is byte-identical to before this work, because on a quiet
+clock the demand multipliers are exactly 1 and the event pass returns its input untouched.
+
+---
+
+## 8. Offline results
 
 Run `npm run sim:eval`.
 
@@ -396,7 +515,7 @@ accuracy.**
 
 ---
 
-## 8. How it is built
+## 9. How it is built
 
 React 19 + TypeScript (strict) + Tailwind CSS 4 + Vite 6. ~11,300 lines. No backend, no
 API key, no network call at runtime.
@@ -445,7 +564,7 @@ our instrumentation of it.
 
 ---
 
-## 9. Who this is for
+## 10. Who this is for
 
 | Audience | What to show them |
 | --- | --- |
@@ -458,7 +577,7 @@ they do (Intent, Similarity, Complement) rather than for any product.
 
 ---
 
-## 10. What it deliberately does not do
+## 11. What it deliberately does not do
 
 - **No ROI calculator.** There was one; it was deleted. It was the only screen with no
   model behind it, and a made-up revenue figure next to nine screens of real arithmetic
@@ -471,7 +590,7 @@ they do (Intent, Similarity, Complement) rather than for any product.
 
 ---
 
-## 11. Where it goes next
+## 12. Where it goes next
 
 The prototype is complete as a prototype. Turning it into a system means, in rough order:
 

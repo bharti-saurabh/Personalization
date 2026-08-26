@@ -26,6 +26,7 @@
 import {
   DecisionTrace,
   Department,
+  MarketEventKind,
   Product,
   Scenario,
   StorefrontPage,
@@ -67,6 +68,36 @@ export interface SurfaceChange {
   isFallback?: boolean;
 }
 
+/**
+ * What a market event did to the world, recorded on the beat that reports it.
+ *
+ * A market event is the one thing in this demo that happens WITHOUT the shopper
+ * doing anything, which is exactly why it needs its own record. Every other beat
+ * can be explained by pointing at a user event; this one has to explain itself,
+ * and the counts are how it does that. They are all countable by construction -
+ * products rewritten, products moved between clubs, milliseconds spent - because
+ * the decision stream's closing line may never be a posterior.
+ */
+export interface MarketBeat {
+  kind: MarketEventKind;
+  /** The event, as a merchandising desk would write it. */
+  headline: string;
+  /** What it is expected to do to demand. */
+  detail: string;
+  /** Products the market pass rewrote. */
+  touched: number;
+  /** Products that changed club. A trade moves these; nothing else does. */
+  moved: number;
+  /** Products whose intrinsic popularity the event raised. */
+  lifted: number;
+  /** Products whose intrinsic popularity the event cut. An injury does this. */
+  damped: number;
+  /** Wall-clock cost of rebuilding catalog, population and all three graphs. */
+  rebuildMs: number;
+  /** The clock the world now stands on. */
+  at: string;
+}
+
 export interface JournalBeat {
   id: string;
   /**
@@ -78,7 +109,7 @@ export interface JournalBeat {
    */
   eventId: string | null;
   seq: number;
-  kind: 'session' | 'action' | 'setting';
+  kind: 'session' | 'action' | 'setting' | 'market';
   at: string;
   /** What the shopper did, in their words not the model's. */
   headline: string;
@@ -93,6 +124,8 @@ export interface JournalBeat {
   shift?: { label: string; from: number; to: number };
   confidence: { from: number; to: number };
   personalizationOn: boolean;
+  /** Present only on a `market` beat. */
+  market?: MarketBeat;
 }
 
 export interface BeatInput {
@@ -110,6 +143,7 @@ export interface BeatInput {
   page: StorefrontPage;
   anchor: Product;
   personalizationOn: boolean;
+  market?: MarketBeat;
 }
 
 const pct = (v: number) => Math.round(v * 100);
@@ -465,5 +499,6 @@ export function buildBeat(i: BeatInput): JournalBeat {
       : undefined,
     confidence: { from: prevIntent?.confidence ?? intent.confidence, to: intent.confidence },
     personalizationOn: i.personalizationOn,
+    market: i.market,
   };
 }

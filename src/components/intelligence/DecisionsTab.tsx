@@ -22,7 +22,7 @@ import { useApp } from '../../context/AppContext';
 import { fieldLabel } from '../../ml/decisions';
 import type { DecisionEntry, FeatureRow } from '../../ml/decisions';
 import type { ProfileDelta } from '../../ml/engine';
-import { ChevronDown, ChevronRight, Cpu, Layers, PenLine, Check, X as XIcon } from 'lucide-react';
+import { ChevronDown, ChevronRight, Cpu, Globe2, Layers, PenLine, Check, X as XIcon } from 'lucide-react';
 
 /* ------------------------------------------------------------------ atoms -- */
 
@@ -124,18 +124,35 @@ const FeatureVector: React.FC<{ rows: FeatureRow[] }> = ({ rows }) => {
 const DecisionCard: React.FC<{ entry: DecisionEntry; defaultOpen: boolean }> = ({ entry, defaultOpen }) => {
   const [open, setOpen] = useState(defaultOpen);
   const [vector, setVector] = useState(false);
+  // A market entry is the only kind the shopper did not cause, and it is marked
+  // as such rather than blended in - a viewer scrolling the stream should be
+  // able to see at a glance which re-ranks were their own doing.
+  const isMarket = entry.market !== undefined;
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+    <article
+      className={`rounded-xl border bg-white overflow-hidden ${
+        isMarket ? 'border-straive-300 ring-1 ring-straive-100' : 'border-slate-200'
+      }`}
+    >
       {/* Trigger. */}
       <button
         onClick={() => setOpen((v) => !v)}
         className="w-full text-left px-3 py-2 flex items-start gap-2 hover:bg-slate-50 transition-colors"
       >
-        <span className="mt-0.5 shrink-0 h-5 w-5 rounded-md bg-slate-900 text-white grid place-items-center text-[9px] font-mono font-bold">
+        <span
+          className={`mt-0.5 shrink-0 h-5 w-5 rounded-md text-white grid place-items-center text-[9px] font-mono font-bold ${
+            isMarket ? 'bg-straive-500' : 'bg-slate-900'
+          }`}
+        >
           {entry.seq}
         </span>
         <span className="min-w-0 flex-1">
+          {isMarket && (
+            <span className="inline-flex items-center gap-1 mb-0.5 rounded px-1 py-px bg-straive-50 border border-straive-200 text-[8.5px] font-extrabold uppercase tracking-wide text-straive-700">
+              <Globe2 className="h-2.5 w-2.5" /> Market event · not shopper-caused
+            </span>
+          )}
           <span className="block text-[12px] font-bold text-slate-900 leading-snug">{entry.trigger.headline}</span>
           <span className="block text-[9.5px] font-mono text-slate-400 mt-0.5">
             {entry.at} · {entry.trigger.page}
@@ -161,6 +178,36 @@ const DecisionCard: React.FC<{ entry: DecisionEntry; defaultOpen: boolean }> = (
 
       {open && (
         <div className="px-3 pb-3 space-y-3 border-t border-slate-100 pt-2.5">
+          {/* What the world did. First, because on a market entry it is the
+              cause and everything below it is the effect. */}
+          {entry.market && (
+            <section>
+              <h4 className="flex items-center gap-1.5 text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-400 mb-1.5">
+                <Globe2 className="h-3 w-3" /> What the world did
+              </h4>
+              <div className="rounded-lg border border-straive-200 bg-straive-50/50 px-2 py-1.5">
+                <p className="text-[10.5px] text-slate-700 leading-snug">{entry.market.detail}</p>
+                <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5">
+                  {[
+                    ['Products rewritten', String(entry.market.touched)],
+                    ['Changed club', String(entry.market.moved)],
+                    ['Popularity raised', String(entry.market.lifted)],
+                    ['Popularity cut', String(entry.market.damped)],
+                    ['World rebuild', `${entry.market.rebuildMs}ms`],
+                    ['Clock now', entry.market.at],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex items-baseline gap-1.5">
+                      <span className="flex-1 min-w-0 truncate text-[9.5px] text-slate-500">{label}</span>
+                      <span className="shrink-0 text-[10px] font-mono font-bold text-slate-900 tabular-nums">
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* Models that ran. */}
           {entry.models.length > 0 && (
             <section>
@@ -214,7 +261,9 @@ const DecisionCard: React.FC<{ entry: DecisionEntry; defaultOpen: boolean }> = (
               // is more honest than hiding the beat and implying every click moves
               // the model.
               <p className="text-[10px] text-slate-400 italic">
-                Nothing written — this event was already consistent with what the profile held.
+                {isMarket
+                  ? 'Nothing written — a market event moves the world, not the shopper. The profile is unchanged; what it is being scored against is not.'
+                  : 'Nothing written — this event was already consistent with what the profile held.'}
               </p>
             )}
           </section>

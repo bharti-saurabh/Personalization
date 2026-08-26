@@ -43,12 +43,11 @@ import {
   DEPARTMENTS,
   DEPARTMENT_IDS,
   LEAGUES,
-  LEAGUE_SEASONALITY,
-  SIM_MONTH,
   TEAMS,
   TEAM_BY_ID,
   TEAM_IDS,
 } from '../sim/taxonomy';
+import { SimClock, activeClock, seasonality, teamDemand } from '../sim/clock';
 import { scorePersona } from './persona';
 import type { PersonaBlock, PersonaFeatures } from './persona';
 import { seedWrites } from './identity';
@@ -343,11 +342,21 @@ export const PLAYER_IDS: PlayerId[] = TEAMS.flatMap((t) => t.players.map((p) => 
  * Popularity prior: national fan-base size weighted by how in-season the league
  * is. Moved here from intent.ts, which now imports it, because the prior is
  * where a profile starts and intent is only one of its readers.
+ *
+ * The clock enters as a defaulted trailing parameter, which keeps every call
+ * site working - including the four places this is passed by reference as a
+ * `(k) => number` - while letting an arm running its own world pass its own
+ * time. It is the ONLY route the calendar takes into the ML layer, deliberately:
+ * a model's prior should move when the season and the market move, and nothing
+ * else in here should know what month it is.
+ *
+ * `teamDemand` is the market-event half. With an empty event log it returns 1
+ * exactly, so an unfired world produces the same prior it always did.
  */
-export function teamPrior(team: TeamId): number {
+export function teamPrior(team: TeamId, clock: SimClock = activeClock()): number {
   const cfg = TEAM_BY_ID[team];
-  const seasonal = LEAGUE_SEASONALITY[cfg.league as League][SIM_MONTH];
-  return Math.max(0.01, cfg.marketSize * (0.45 + 0.55 * seasonal));
+  const seasonal = seasonality(cfg.league as League, clock);
+  return Math.max(0.01, cfg.marketSize * (0.45 + 0.55 * seasonal) * teamDemand(team, clock));
 }
 
 export function departmentPrior(dept: Department): number {

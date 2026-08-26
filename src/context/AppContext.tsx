@@ -14,13 +14,21 @@ import {
 import { IntentResult } from '../ml/intent';
 import { SimilarityResult } from '../ml/similarity';
 import { ComplementResult } from '../ml/complement';
-import { JournalBeat, buildBeat } from '../ml/journal';
+import { JournalBeat, MarketBeat, buildBeat } from '../ml/journal';
 import { buildDecisions } from '../ml/decisions';
 import type { DecisionEntry } from '../ml/decisions';
 import { emptyLedger } from '../ml/effort';
 import type { EffortLedger } from '../ml/effort';
 import { buildScenarios, findAnchorProduct } from '../data/scenarios';
-import { getDataset, subscribeToWorld } from '../sim/dataset';
+import { getDataset, fireMarketEvent, resetMarket, subscribeToWorld } from '../sim/dataset';
+import {
+  EVENT_DECK,
+  MarketEvent,
+  MarketEventTemplate,
+  activeClock,
+  clockLabel,
+  describeEvent,
+} from '../sim/clock';
 import {
   runIntentEngine,
   runSimilarityEngine,
@@ -123,6 +131,27 @@ interface AppContextType {
    * invented. See ml/effort.ts.
    */
   effortLedger: EffortLedger;
+
+  /* ------------------------------------------------------- market events -- */
+
+  /** The events the demo can fire, in the order the deck presents them. */
+  eventDeck: MarketEventTemplate[];
+  /**
+   * Fires one into the live world.
+   *
+   * Rebuilds the catalog, re-simulates the population, re-estimates all three
+   * co-occurrence graphs, and writes a beat into the decision stream. Takes a
+   * couple of seconds, which is why `marketRebuilding` exists.
+   */
+  fireEvent: (template: MarketEventTemplate) => void;
+  /** True while the world is being rebuilt, so surfaces can say so. */
+  marketRebuilding: boolean;
+  /** Events fired so far, newest first. Empty on a quiet world. */
+  firedEvents: MarketEvent[];
+  /** The month and year the world currently stands on. */
+  marketClockLabel: string;
+  /** Back to the world every published metric was measured under. */
+  resetMarket: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -379,6 +408,90 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [intentPrediction, targetComponent, products]
   );
 
+  /* -------------------------------------------------------- market events -- */
+
+  const [marketRebuilding, setMarketRebuilding] = useState(false);
+  const [firedEvents, setFiredEvents] = useState<MarketEvent[]>([]);
+
+  /**
+   * A fired event waiting for its beat.
+   *
+   * The rebuild has to finish, and the engines have to re-run against the new
+   * catalog, BEFORE the beat is written - otherwise the entry would report the
+   * pre-event scores and claim they were caused by the event. So the handler
+   * fires, stashes the counts here, and an effect keyed on `worldVersion` writes
+   * the beat once React has re-rendered through the new world. Same ordering
+   * trick the user-event recorder uses with `prevIntentRef`, for the same
+   * reason.
+   */
+  const pendingMarket = useRef<{ event: MarketEvent; beat: MarketBeat } | null>(null);
+
+  const fireEvent = (template: MarketEventTemplate) => {
+    if (marketRebuilding) return;
+    setMarketRebuilding(true);
+
+    // Yielded to the browser first so the rebuilding state actually paints. The
+    // rebuild is a couple of seconds of synchronous work on the main thread -
+    // honest, because the co-order priors really are re-estimated from a fresh
+    // population - and a freeze with no explanation reads as a crash.
+    setTimeout(() => {
+      const startedAt = performance.now();
+      const event = fireMarketEvent(template);
+      const after = getDataset();
+      const rebuildMs = Math.round(performance.now() - startedAt);
+
+      const touchedProducts = after.products.filter((p) => p.marketFlag?.eventId === event.id);
+      const { detail } = describeEvent(event);
+
+      pendingMarket.current = {
+        event,
+        beat: {
+          kind: event.kind,
+          headline: describeEvent(event).headline,
+          detail,
+          touched: touchedProducts.length,
+          moved: touchedProducts.filter((p) => p.movedFrom !== undefined).length,
+          lifted: touchedProducts.filter((p) => (p.marketFlag?.lift ?? 1) > 1).length,
+          damped: touchedProducts.filter((p) => (p.marketFlag?.lift ?? 1) < 1).length,
+          rebuildMs,
+          at: clockLabel(activeClock()),
+        },
+      };
+
+      /*
+       * Re-bind what the shopper is holding to the rebuilt catalog.
+       *
+       * Product ids survive a market event on purpose, so this is a lookup
+       * rather than a reconciliation - but it has to happen, because the PDP and
+       * the cart hold Product OBJECTS, and those objects are the pre-event ones.
+       * Without this the storefront would re-rank correctly everywhere except
+       * the two places the shopper is actually looking.
+       *
+       * Batched with the world bump above into a single commit, so the beat
+       * effect below sees a tree where every surface, the anchor and the cart
+       * are all on the new world at once.
+       */
+      setSelectedProduct((current) => after.productById.get(current.id) ?? current);
+      setCart((prev) =>
+        prev.map((item) => {
+          const fresh = after.productById.get(item.product.id);
+          return fresh ? { ...item, product: fresh } : item;
+        })
+      );
+
+      setFiredEvents((prev) => [event, ...prev]);
+      setMarketRebuilding(false);
+    }, 30);
+  };
+
+  const resetMarketWorld = () => {
+    resetMarket();
+    setFiredEvents([]);
+    pendingMarket.current = null;
+  };
+
+  const marketClockLabel = React.useMemo(() => clockLabel(activeClock()), [worldVersion]);
+
   /* ------------------------------------------------------------- journal -- */
 
   // A render-time snapshot of everything a beat needs. The recorder effects fire
@@ -481,6 +594,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setJournal((prev) => [beat, ...prev].slice(0, 40));
   }, [isPersonalizationOn]);
 
+  /**
+   * Writes the beat for a fired market event.
+   *
+   * Keyed on `worldVersion` rather than on the fire handler, so by the time it
+   * runs the products memo, all three engine memos and the decision trace have
+   * already re-run against the rebuilt world. The scores this beat reports are
+   * therefore the post-event ones, which is the only version of the claim worth
+   * making.
+   *
+   * `eventId` stays null: a market event is not a user event and has no field
+   * writes to join to. The decision stream renders it from the `market` payload
+   * instead - see the header note in ml/decisions.ts.
+   */
+  useEffect(() => {
+    const pending = pendingMarket.current;
+    if (!pending) return;
+    pendingMarket.current = null;
+
+    const L = latest.current;
+    beatSeq.current += 1;
+    const beat = buildBeat({
+      seq: beatSeq.current,
+      kind: 'market',
+      headline: pending.beat.headline,
+      scenario: L.scenario,
+      intent: L.intent,
+      prevIntent: prevIntentRef.current,
+      trace: L.trace,
+      similarity: L.similarity,
+      complement: L.complement,
+      page: L.page,
+      anchor: L.anchor,
+      personalizationOn: L.personalizationOn,
+      market: pending.beat,
+    });
+    prevIntentRef.current = L.intent;
+    setJournal((prev) => [beat, ...prev].slice(0, 40));
+  }, [worldVersion]);
+
   return (
     <AppContext.Provider
       value={{
@@ -530,6 +682,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastDeltas: profileStore.lastDeltas,
         decisions,
         effortLedger,
+        eventDeck: EVENT_DECK,
+        fireEvent,
+        marketRebuilding,
+        firedEvents,
+        marketClockLabel,
+        resetMarket: resetMarketWorld,
       }}
     >
       {children}

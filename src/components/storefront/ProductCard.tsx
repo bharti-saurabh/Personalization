@@ -1,6 +1,6 @@
 import React from 'react';
 import { Product } from '../../types';
-import { Star, Sparkles } from 'lucide-react';
+import { Star, Sparkles, Flame, TrendingDown, ArrowLeftRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProductImage } from './ProductImage';
 
@@ -58,6 +58,38 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, bad
         {/* Promo flag, top-left. A percentage beats the word "Sale": it is the
             thing a shopper is actually scanning for. */}
         <div className="absolute top-0 left-0 z-10 flex flex-col items-start gap-1 p-2">
+          {/*
+            Market flag, above everything else.
+
+            It sits first because it is the only badge on this tile that is
+            about the world rather than about the product, and because after a
+            trade fires it is the answer to the question the shopper is actually
+            asking - why does this jersey say Dallas when I clicked on it in
+            Philadelphia. A cut is flagged as loudly as a lift; a merchandiser
+            who only sees the upside will over-buy.
+          */}
+          {product.marketFlag && (
+            <span
+              title={`${product.marketFlag.headline} — simulated market event`}
+              className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide flex items-center gap-1 max-w-[9.5rem] ${
+                product.marketFlag.lift < 1
+                  ? 'bg-slate-700 text-white'
+                  : 'bg-straive-500 text-white'
+              }`}
+            >
+              {product.movedFrom ? (
+                <ArrowLeftRight className="h-2.5 w-2.5 shrink-0" />
+              ) : product.marketFlag.lift < 1 ? (
+                <TrendingDown className="h-2.5 w-2.5 shrink-0" />
+              ) : (
+                <Flame className="h-2.5 w-2.5 shrink-0" />
+              )}
+              <span className="truncate">
+                {product.movedFrom ? `From ${product.movedFrom.team}` : 'Hot market'}
+              </span>
+            </span>
+          )}
+
           {sale ? (
             <span className="bg-red-600 text-white font-black text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide">
               {pctOff}% OFF

@@ -13,6 +13,9 @@ import {
   ChevronRight,
   Home,
   X,
+  ArrowLeftRight,
+  Flame,
+  TrendingDown,
 } from 'lucide-react';
 import { SimilarityMatch, ComplementMatch } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
@@ -124,6 +127,47 @@ export const ProductDetailPage: React.FC = () => {
           <span className="font-bold text-slate-800">{selectedProduct.department}</span>
         </nav>
       </div>
+
+      {/*
+        Market notice.
+
+        Full width, above the fold, and written in the second person. When a
+        trade fires while a shopper is standing on this page, the product they
+        clicked silently becomes a different club's product. Re-ranking the
+        carousels below without saying that would be the single most confusing
+        thing the demo could do - so the page says what happened, names the old
+        club, and labels itself simulated.
+      */}
+      {selectedProduct.marketFlag && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-3">
+          <div className="rounded-xl border border-straive-300 bg-straive-50 px-4 py-2.5 flex items-start gap-3">
+            <span className="mt-0.5 shrink-0 grid place-items-center h-6 w-6 rounded-full bg-straive-500 text-white">
+              {selectedProduct.movedFrom ? (
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+              ) : selectedProduct.marketFlag.lift < 1 ? (
+                <TrendingDown className="h-3.5 w-3.5" />
+              ) : (
+                <Flame className="h-3.5 w-3.5" />
+              )}
+            </span>
+            <div className="min-w-0">
+              <p className="text-[12px] font-extrabold text-slate-900 leading-snug">
+                {selectedProduct.marketFlag.headline}
+                <span className="ml-2 align-middle text-[8.5px] font-bold uppercase tracking-wide rounded px-1 py-px bg-white border border-straive-200 text-straive-700">
+                  Simulated market event
+                </span>
+              </p>
+              <p className="text-[11px] text-slate-600 leading-snug mt-0.5">
+                {selectedProduct.movedFrom
+                  ? `This item moved with the player. It kept its product id and its place in your cart, and it now carries ${TEAM_BY_ID[selectedProduct.team].fullName} colours instead of ${TEAM_BY_ID[selectedProduct.movedFrom.team].fullName}.`
+                  : selectedProduct.marketFlag.lift < 1
+                    ? `Demand for this item was cut ${Math.round((1 - selectedProduct.marketFlag.lift) * 100)}% by the event, and it has fallen in every ranking below.`
+                    : `Demand for this item was lifted ${Math.round((selectedProduct.marketFlag.lift - 1) * 100)}% by the event, and it has risen in every ranking below.`}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main PDP Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6">

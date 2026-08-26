@@ -4,6 +4,54 @@ export type Department = 'Jerseys' | 'T-shirts' | 'Hats' | 'Hoodies' | 'Collecti
 
 export type League = 'NFL' | 'NBA' | 'MLB';
 
+/**
+ * The seven things that can happen to the sports world between two page loads.
+ *
+ * Declared here rather than in `src/sim/clock.ts` on purpose. `Product` carries
+ * a market flag, and if the flag's `kind` were imported from clock.ts then
+ * types.ts and clock.ts would import each other. Erasable type cycles are legal
+ * in TypeScript, but the direction of dependency should read one way: clock.ts
+ * knows about the catalog, and the catalog does not know about the clock.
+ */
+export type MarketEventKind =
+  | 'TRADE'
+  | 'INJURY'
+  | 'PLAYOFF_WIN'
+  | 'CHAMPIONSHIP'
+  | 'NEW_SIGNING'
+  | 'RETIREMENT'
+  | 'KIT_LAUNCH';
+
+/**
+ * Why a product is hot right now, stamped on it by the market-event pass.
+ *
+ * Present only on products an event actually touched, which is what makes it
+ * usable as a filter: `products.filter(p => p.marketFlag)` is the hot-market
+ * assortment, with no threshold to argue about.
+ */
+export interface MarketFlag {
+  /**
+   * Which fired event stamped this flag.
+   *
+   * Carried so the count of what an event touched is exact rather than inferred
+   * from the headline. Two trades of the same player in the same demo would
+   * otherwise be indistinguishable on the product.
+   */
+  eventId: string;
+  kind: MarketEventKind;
+  /** One line, in merchandising language. Rendered as-is on the tile. */
+  headline: string;
+  /**
+   * Multiplier this event applied to intrinsic popularity, after calendar
+   * decay. Above 1 is demand pulled in, below 1 is demand pushed away - an
+   * injury flags a product just as loudly as a championship does, and the sign
+   * is the difference.
+   */
+  lift: number;
+  /** Months since the event fired, at the clock the catalog was built under. */
+  monthsSince: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -43,6 +91,20 @@ export interface Product {
   sizes?: string[];
   /** 0 = brand new release, 1 = long-standing catalog item. Feeds the cold-start narrative. */
   releaseRecency?: number;
+
+  // --- Fields written by the market-event pass (src/sim/catalog.ts) ---
+  /** Set when a fired market event touched this product. Absent on a quiet catalog. */
+  marketFlag?: MarketFlag;
+  /**
+   * Where this product was before an event moved it.
+   *
+   * A trade rewrites `team`, `league` and the colourway in place so the product
+   * id survives - a shopper with the jersey in their cart should not find it
+   * missing. This records what it used to be, which is the only way the
+   * storefront can say "moved from Philadelphia" rather than silently showing
+   * a different club than the one the shopper clicked.
+   */
+  movedFrom?: { team: TeamId; league: League };
 }
 
 export type ScenarioId = 'returning_eagles' | 'multi_team' | 'anonymous' | 'hot_market' | 'low_confidence';

@@ -31,11 +31,16 @@ import {
   utility,
 } from './choice';
 import {
+  SimClock,
+  activeClock,
+  departmentDemand,
+  seasonality,
+  teamDemand,
+} from './clock';
+import {
   DEPARTMENTS,
   DEPARTMENT_BY_ID,
   DEPARTMENT_IDS,
-  LEAGUE_SEASONALITY,
-  SIM_MONTH,
   TEAM_BY_ID,
   TEAM_IDS,
 } from './taxonomy';
@@ -575,13 +580,31 @@ function simulateSession(
   byTeam: Map<TeamId, number[]>,
   byTeamDept: Map<string, number[]>,
   model: ChoiceModel,
+  clock: SimClock,
   rank?: SurfacePolicy
 ): SimSession {
-  // Which club is front of mind this session: affinity weighted by how in-season
-  // that club's league currently is.
+  /*
+   * Which club is front of mind this session.
+   *
+   * Three terms, and they are three different kinds of claim. The affinity is
+   * who this shopper is. The seasonality is where the league sits in its own
+   * year. `teamDemand` is what the market has done lately - a title win, a
+   * trade, an injury - and it is the term that makes a fired event reach the
+   * POPULATION rather than only the catalog.
+   *
+   * That distinction is the whole reason the event table has both a catalog
+   * effect and a population effect. Lifting a product's popularity column moves
+   * where it ranks. Lifting a club's demand moves who walks in the door, which
+   * is what makes the co-order graph re-estimate rather than merely re-sort.
+   *
+   * With an empty event log `teamDemand` returns exactly 1 and this reduces to
+   * the two-term draw the published metrics were measured under.
+   */
   const focusTeam = rng.pickWeighted(
     TEAM_IDS,
-    TEAM_IDS.map((t) => customer.teamAffinity[t] * LEAGUE_SEASONALITY[TEAM_BY_ID[t].league][SIM_MONTH])
+    TEAM_IDS.map(
+      (t) => customer.teamAffinity[t] * seasonality(TEAM_BY_ID[t].league, clock) * teamDemand(t, clock)
+    )
   );
 
   /*
@@ -604,7 +627,7 @@ function simulateSession(
    */
   const focusDept = rng.pickWeighted(
     DEPARTMENT_IDS,
-    DEPARTMENT_IDS.map((d) => customer.deptAffinity[d])
+    DEPARTMENT_IDS.map((d) => customer.deptAffinity[d] * departmentDemand(d, clock))
   );
 
   // Candidate set: the focus team's assortment, plus a slice of the rest of the
@@ -738,7 +761,8 @@ function calibrateChoiceModel(
   products: Product[],
   byTeam: Map<TeamId, number[]>,
   byTeamDept: Map<string, number[]>,
-  seed: string
+  seed: string,
+  clock: SimClock
 ): ChoiceModel {
   const model: ChoiceModel = {
     ...CHOICE_SHAPE,
@@ -758,7 +782,7 @@ function calibrateChoiceModel(
     const out: SimSession[] = [];
     for (let i = 0; i < CALIBRATION_SESSIONS; i++) {
       const customer = drawCustomer(rng, `calib-${i}`);
-      out.push(simulateSession(rng, customer, products, byTeam, byTeamDept, model));
+      out.push(simulateSession(rng, customer, products, byTeam, byTeamDept, model, clock));
     }
     return out;
   };
@@ -792,7 +816,7 @@ function calibrateChoiceModel(
       const rng = new Rng(`${seed}:calibration`);
       for (let i = 0; i < CALIBRATION_SESSIONS; i++) {
         const customer = drawCustomer(rng, `calib-${i}`);
-        const session = simulateSession(rng, customer, products, byTeam, byTeamDept, model);
+        const session = simulateSession(rng, customer, products, byTeam, byTeamDept, model, clock);
         for (const idx of session.viewed) {
           clicked.push(
             utility(productAffinityScore(products[idx], customer, session.focusTeam, session.focusDept))
@@ -817,7 +841,7 @@ function calibrateChoiceModel(
     const rng = new Rng(`${seed}:calibration`);
     for (let i = 0; i < CALIBRATION_SESSIONS; i++) {
       const customer = drawCustomer(rng, `calib-${i}`);
-      const session = simulateSession(rng, customer, products, byTeam, byTeamDept, model);
+      const session = simulateSession(rng, customer, products, byTeam, byTeamDept, model, clock);
       if (session.carted.length === 0) continue;
       let affinitySum = 0;
       let value = 0;
@@ -875,11 +899,12 @@ export function measureSurfacePolicy(
   products: Product[],
   policy: SurfacePolicy | null,
   seed: string = BEHAVIOR_SEED,
-  shoppers = 4000
+  shoppers = 4000,
+  clock: SimClock = activeClock()
 ): ArmResult {
   const rng = new Rng(`${seed}:experiment`);
   const { byTeam, byTeamDept } = buildBuckets(products);
-  const choice = calibrateChoiceModel(products, byTeam, byTeamDept, seed);
+  const choice = calibrateChoiceModel(products, byTeam, byTeamDept, seed, clock);
 
   let sessions = 0;
   let views = 0;
@@ -895,7 +920,7 @@ export function measureSurfacePolicy(
     const customer = drawCustomer(rng, `arm-${c}`);
     const sessionCount = Math.max(2, Math.min(7, Math.round(rng.logNormal(Math.log(3.2), 0.45))));
     for (let i = 0; i < sessionCount; i++) {
-      const session = simulateSession(rng, customer, products, byTeam, byTeamDept, choice, policy ?? undefined);
+      const session = simulateSession(rng, customer, products, byTeam, byTeamDept, choice, clock, policy ?? undefined);
       sessions++;
       views += session.viewed.length;
       carts += session.carted.length;
@@ -922,14 +947,20 @@ export function measureSurfacePolicy(
   };
 }
 
-export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SEED): SimulationResult {
+export function simulateBehavior(
+  products: Product[],
+  seed: string = BEHAVIOR_SEED,
+  clock: SimClock = activeClock()
+): SimulationResult {
   const startedAt = performance.now();
   const rng = new Rng(seed);
   const { byTeam, byTeamDept } = buildBuckets(products);
 
   // Fitted before a single population shopper is drawn, on its own RNG stream,
   // so calibrating the model does not perturb the world it is calibrated for.
-  const choice = calibrateChoiceModel(products, byTeam, byTeamDept, seed);
+  // The clock goes in with it: intercepts fitted against one market and reused
+  // against another would silently attribute a market effect to a rate change.
+  const choice = calibrateChoiceModel(products, byTeam, byTeamDept, seed, clock);
 
   const graphs: CoGraphs = {
     coView: new Map(),
@@ -976,7 +1007,7 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
     const sessionCount = Math.max(2, Math.min(7, Math.round(rng.logNormal(Math.log(3.2), 0.45))));
     const allSessions: SimSession[] = [];
     for (let s = 0; s < sessionCount; s++) {
-      allSessions.push(simulateSession(rng, customer, products, byTeam, byTeamDept, choice));
+      allSessions.push(simulateSession(rng, customer, products, byTeam, byTeamDept, choice, clock));
     }
 
     for (const session of allSessions) {

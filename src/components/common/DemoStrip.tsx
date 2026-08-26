@@ -16,6 +16,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { ScenarioId, StorefrontPage } from '../../types';
 import { IdentityLadder } from './IdentityLadder';
+import { MarketDeck } from './MarketDeck';
 import { User, ShieldAlert, Sparkles, Flame, HelpCircle, House, LayoutGrid, Package, ShoppingCart } from 'lucide-react';
 
 const SCENARIO_ICON: Record<ScenarioId, React.ReactNode> = {
@@ -121,6 +122,10 @@ export const DemoStrip: React.FC = () => {
         })}
         </div>
       </div>
+
+      {/* WHAT THE WORLD IS DOING. Last, because it is the only row that is not
+          about the shopper - and directly above the storefront it changes. */}
+      <MarketDeck />
     </div>
   );
 };

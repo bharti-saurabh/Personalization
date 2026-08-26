@@ -272,17 +272,15 @@ export function priceBandFor(price: number): '$' | '$$' | '$$$' | '$$$$' {
   return '$$$$';
 }
 
-/**
- * Seasonality by league, indexed by month (0 = January). Drives which teams a
- * simulated shopper is likely to browse, so the co-occurrence graphs carry a
- * realistic sports-calendar signature rather than uniform noise.
+/*
+ * Seasonality and the simulated month used to live here.
+ *
+ * They moved to src/sim/clock.ts. This file is the register of what the world
+ * is made OF - clubs, departments, brands, size ladders - and those do not
+ * change when the calendar does. What time it is, and what has happened to the
+ * sports world since, is a different kind of fact and now has its own module
+ * and its own injectable value.
+ *
+ * Import `seasonality(league, clock)` from './clock' rather than indexing a
+ * constant, so the caller has to say which clock it means.
  */
-export const LEAGUE_SEASONALITY: Record<League, number[]> = {
-  //         J    F    M    A    M    J    J    A    S    O    N    D
-  NFL: [0.75, 0.5, 0.3, 0.3, 0.35, 0.3, 0.45, 0.7, 1.0, 1.0, 0.95, 0.9],
-  NBA: [0.85, 0.8, 0.8, 0.9, 0.85, 0.6, 0.35, 0.3, 0.4, 0.8, 0.85, 0.85],
-  MLB: [0.3, 0.4, 0.65, 0.9, 0.85, 0.85, 0.85, 0.8, 0.9, 0.8, 0.4, 0.35],
-};
-
-/** Month the simulated "today" falls in. Fixed so the demo is reproducible. */
-export const SIM_MONTH = 8; // September - NFL season opening
