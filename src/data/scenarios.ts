@@ -23,7 +23,7 @@
  */
 
 import { Department, Product, Scenario, TeamId, UserEvent } from '../types';
-import { getDataset } from '../sim/dataset';
+import { getDataset, getDatasetVersion } from '../sim/dataset';
 
 /**
  * Finds the most popular catalog item matching a predicate. Used to anchor
@@ -284,15 +284,27 @@ function authorScenarios(): AuthoredScenario[] {
 }
 
 let cachedScenarios: Scenario[] | null = null;
+let cachedForVersion = -1;
 
-/** Scenarios with events flipped into canonical newest-first order. */
+/**
+ * Scenarios with events flipped into canonical newest-first order.
+ *
+ * Version-checked like the model registry, and for the same reason: every event
+ * in these scenarios carries a product id resolved out of the catalog, so the
+ * list is exactly as perishable as the catalog it was resolved against.
+ *
+ * There is deliberately no module-level `SCENARIOS` constant any more. Building
+ * one at import time both captured a reference nothing could invalidate and
+ * dragged the whole catalog build onto the import path. Callers ask for the list
+ * when they need it; `getDataset()` is memoised, so the work is unchanged.
+ */
 export function buildScenarios(): Scenario[] {
-  if (cachedScenarios) return cachedScenarios;
+  if (cachedScenarios && cachedForVersion === getDatasetVersion()) return cachedScenarios;
+  const builtForVersion = getDatasetVersion();
   cachedScenarios = authorScenarios().map((s) => ({
     ...s,
     recentEvents: [...s.recentEvents].reverse(),
   }));
+  cachedForVersion = builtForVersion;
   return cachedScenarios;
 }
-
-export const SCENARIOS: Scenario[] = buildScenarios();

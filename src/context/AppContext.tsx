@@ -15,8 +15,8 @@ import { IntentResult } from '../ml/intent';
 import { SimilarityResult } from '../ml/similarity';
 import { ComplementResult } from '../ml/complement';
 import { JournalBeat, buildBeat } from '../ml/journal';
-import { SCENARIOS, findAnchorProduct } from '../data/scenarios';
-import { getDataset } from '../sim/dataset';
+import { buildScenarios, findAnchorProduct } from '../data/scenarios';
+import { getDataset, subscribeToWorld } from '../sim/dataset';
 import {
   runIntentEngine,
   runSimilarityEngine,
@@ -79,8 +79,21 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [scenarios] = useState<Scenario[]>(SCENARIOS);
-  const [selectedScenario, setSelectedScenario] = useState<Scenario>(SCENARIOS[0]);
+  /**
+   * Which generation of the synthetic world this tree is rendering.
+   *
+   * Everything below reads the catalog through `getDataset()` keyed on this
+   * counter rather than capturing the array once. Holding the reference was fine
+   * while nothing could invalidate it and wrong the moment a market event can:
+   * the models would move to the new catalog and the storefront would keep
+   * painting the old one. Nothing bumps this yet - `invalidateWorld()` has no
+   * callers - so today it stays at zero and every memo below is built once.
+   */
+  const [worldVersion, setWorldVersion] = useState(0);
+  useEffect(() => subscribeToWorld(() => setWorldVersion((v) => v + 1)), []);
+
+  const scenarios = React.useMemo<Scenario[]>(() => buildScenarios(), [worldVersion]);
+  const [selectedScenario, setSelectedScenario] = useState<Scenario>(() => buildScenarios()[0]);
   const [isPersonalizationOn, setIsPersonalizationOn] = useState<boolean>(true);
   const [showMLPanel, setShowMLPanel] = useState<boolean>(true);
 
@@ -88,9 +101,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [storefrontPage, setStorefrontPage] = useState<StorefrontPage>('home');
 
   // The catalog and the trained-artefact stand-ins are built once, lazily, by
-  // the simulation layer. `useState` with an initialiser keeps that off the
-  // render path after the first mount.
-  const [products] = useState<Product[]>(() => getDataset().products);
+  // the simulation layer. Memoising on the world version keeps that off the
+  // render path while still letting an invalidation through.
+  const products = React.useMemo<Product[]>(() => getDataset().products, [worldVersion]);
 
   /** The hero product the demo opens on: the most popular Jalen Hurts jersey. */
   const openingProduct = React.useMemo(
@@ -109,7 +122,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
   ]);
 
-  const [userEvents, setUserEvents] = useState<UserEvent[]>(SCENARIOS[0].recentEvents);
+  const [userEvents, setUserEvents] = useState<UserEvent[]>(() => buildScenarios()[0].recentEvents);
   const [activeTeamOverride, setActiveTeamOverride] = useState<TeamId | null>(null);
   const [activeDeptFilter, setActiveDeptFilter] = useState<string | null>(null);
   const [activeLeagueFilter, setActiveLeagueFilter] = useState<League | null>(null);

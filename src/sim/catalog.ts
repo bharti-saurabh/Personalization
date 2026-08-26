@@ -157,10 +157,6 @@ function generateProduct(
     badge,
     styleFamily,
     popularity,
-    // Filled in by graphs.ts once sessions are simulated.
-    coViewScore: 0,
-    coCartScore: 0,
-    coOrderScore: 0,
     primaryColor: team.primaryColor,
     secondaryColor: team.secondaryColor,
     jerseyNumber: rosterEntry?.number,

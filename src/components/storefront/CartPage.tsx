@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Trash2, ShoppingBag, Plus, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
 import { runComplementEngine } from '../../ml/engine';
@@ -39,9 +39,17 @@ export const CartPage: React.FC = () => {
   const shippingCost = subtotal > 75 || subtotal === 0 ? 0 : 7.99;
   const grandTotal = subtotal + shippingCost;
 
-  // Derive cart cross-sell complement items based on first cart item anchor
+  // Derive cart cross-sell complement items based on first cart item anchor.
+  //
+  // Memoised on the two things the retrieval actually depends on. Unmemoised,
+  // this ran a full co-order sweep of the catalog on every render of the cart -
+  // including every quantity tick, every hover that moved state, and the
+  // checkout confirmation - to produce the same three products each time.
   const anchorProduct = cart[0]?.product || products[0];
-  const cartComplements = runComplementEngine(anchorProduct, products, 3);
+  const cartComplements = useMemo(
+    () => runComplementEngine(anchorProduct, products, 3),
+    [anchorProduct, products]
+  );
 
   const handleAddCrossSell = (compProduct: typeof products[0]) => {
     addToCart(compProduct, 'L', 'Cross-Sell Complement');

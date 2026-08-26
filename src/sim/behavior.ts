@@ -425,13 +425,35 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
   };
 }
 
+/** Normalised co-occurrence degree for a single product. */
+export interface GraphScores {
+  coView: number;
+  coCart: number;
+  coOrder: number;
+}
+
+/** Per-product co-occurrence degree, keyed by product id. */
+export type GraphScoreTable = Map<string, GraphScores>;
+
 /**
- * Writes normalised co-occurrence degree back onto each product as the
- * coViewScore / coCartScore / coOrderScore fields the UI already reads. These
- * were hand-authored constants in the original demo; they are now measured off
- * the simulated graphs.
+ * Measures normalised co-occurrence degree for every product.
+ *
+ * These were hand-authored constants in the original demo and are now measured
+ * off the simulated graphs. They used to be written back onto each Product as
+ * coViewScore / coCartScore / coOrderScore; they are returned as a side table
+ * instead, for two reasons.
+ *
+ * The writeback made the catalog mutable after generation, and `getDataset()`
+ * hands every caller the same Product instances - so the moment a market event
+ * starts editing the catalog, two simulation arms sharing that dataset would be
+ * reading each other's edits rather than running an honest paired comparison.
+ * And the fields had no readers: the old comment here claimed the UI read them,
+ * but nothing in src or scripts ever did, so nothing is being taken away.
+ *
+ * Keyed by id rather than by catalog index because an index is a position, and a
+ * catalog-mutating event is exactly what invalidates positions.
  */
-export function attachGraphScores(products: Product[], graphs: CoGraphs): void {
+export function computeGraphScores(products: Product[], graphs: CoGraphs): GraphScoreTable {
   const degree = (m: CoMatrix, i: number): number => {
     const row = m.get(i);
     if (!row) return 0;
@@ -453,9 +475,9 @@ export function attachGraphScores(products: Product[], graphs: CoGraphs): void {
   const nc = norm(cartDeg);
   const no = norm(orderDeg);
 
+  const table: GraphScoreTable = new Map();
   products.forEach((p, i) => {
-    p.coViewScore = nv[i];
-    p.coCartScore = nc[i];
-    p.coOrderScore = no[i];
+    table.set(p.id, { coView: nv[i], coCart: nc[i], coOrder: no[i] });
   });
+  return table;
 }

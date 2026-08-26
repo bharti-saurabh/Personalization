@@ -30,9 +30,6 @@ export interface Product {
   badge?: string;
   styleFamily: string;
   popularity: number; // 0 - 100
-  coViewScore: number;
-  coCartScore: number;
-  coOrderScore: number;
   primaryColor: string;
   secondaryColor: string;
   jerseyNumber?: string;
