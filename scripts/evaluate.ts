@@ -9,6 +9,7 @@
  */
 
 import { runEvaluation, MetricRow } from '../src/ml/evaluate';
+import { getDataset } from '../src/sim/dataset';
 
 const report = runEvaluation();
 
@@ -46,4 +47,39 @@ for (const [model, baseline] of rows) {
 
 console.log(
   `population ${report.meta.population}  evaluated ${report.meta.evaluatedCustomers}  catalog ${report.meta.catalogSize}  ${report.meta.elapsedMs}ms\n`
+);
+
+// The choice model behind the numbers above. Printed with the metrics rather
+// than in a separate command because a metric table without the generative
+// parameters that produced it invites the reader to treat it as a measurement
+// of the world instead of a recovery test against a known process.
+const { choice, stats } = getDataset();
+const rel = (a: number, t: number) => `${(((a - t) / t) * 100).toFixed(1)}%`.padStart(7);
+
+console.log('CHOICE MODEL - fitted intercepts and their calibration targets');
+console.log(`${'parameter'.padEnd(22)}${'value'.padStart(9)}${'target'.padStart(10)}${'achieved'.padStart(10)}${'error'.padStart(8)}${'iters'.padStart(7)}`);
+console.log('-'.repeat(66));
+const fits: [string, number, { target: number; achieved: number; iterations: number }][] = [
+  ['clickIntercept', choice.clickIntercept, choice.calibration.depth],
+  ['addIntercept', choice.addIntercept, choice.calibration.addRate],
+  ['orderIntercept', choice.orderIntercept, choice.calibration.conversion],
+];
+for (const [name, value, c] of fits) {
+  console.log(
+    `${name.padEnd(22)}${value.toFixed(4).padStart(9)}${c.target.toFixed(4).padStart(10)}${c.achieved.toFixed(4).padStart(10)}${rel(c.achieved, c.target)}${String(c.iterations).padStart(7)}`
+  );
+}
+console.log('\nEverything else in the choice model is assumed, not fitted - the slopes and');
+console.log('the examination curve. Fitting a discrimination slope needs observed clicks');
+console.log('with known relevance, which a synthetic world does not have.\n');
+
+const r = stats.realised;
+console.log('REALISED VOLUMES - over every generated session, held-out included');
+console.log(
+  `  depth ${r.depth}  addRate ${r.addRate}  conversion ${r.conversion}\n` +
+    `  slotsWalked ${r.slotsWalked}  scrolledPast ${r.scrolledPast}  abandonRate ${r.abandonRate}\n`
+);
+console.log(
+  `  selectivity ${r.discrimination}  (share of clicks in the grid's top affinity quartile;\n` +
+    `               about 0.25 is a shopper indifferent to what they are shown)\n`
 );

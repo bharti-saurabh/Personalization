@@ -245,8 +245,57 @@ argument.
 | --- | --- |
 | Catalog | **798 products** across 6 clubs (Eagles 138, Cowboys 151, Chiefs 142, Lakers 149, 76ers 112, Phillies 106) and 8 departments (Jerseys 191, Hats 136, T-shirts 128, Hoodies 112, Collectibles 80, Accessories 80, Kids 48, Home & Office 23) |
 | Population | **14,000 synthetic shoppers** with club affinities, price sensitivity and category preferences |
-| Behaviour | **35,682 sessions**, **229,451 view events**, **7,993 orders**, mean basket size 1.55 |
-| Build time | ~570ms, in the browser, on load |
+| Behaviour | **36,879 sessions**, **222,426 view events**, **6,243 orders**, mean basket size 1.60 |
+| Build time | ~2.7s, in the browser, on load |
+
+### The choice model
+
+Shoppers no longer sample what they look at from a weighted pool. The store **surfaces a
+ranked grid and the shopper walks it**, and every step is a calibrated probability:
+
+| Quantity | Form |
+| --- | --- |
+| `examinationProbability(position)` | `(1/(r+1))^γ`, with a fold multiplier past rank 12 |
+| `relevanceProbability(affinity)` | `σ(β₀ + β₁·ln a)` |
+| `clickProbability` | examination × relevance |
+| `scrollPastProbability` | examination × (1 − relevance) |
+| `addProbability` | `σ(α₀ + α₁·ln a)` — P(add \| click) |
+| `abandonProbability` | rises with consecutive misses and fatigue, falls with clicks and adds |
+| `orderProbability` | reads mean cart affinity and basket value against price sensitivity |
+
+Three intercepts are **fitted** by deterministic bisection against explicit volume
+targets; the slopes and the examination curve are **assumed**, and the distinction is
+carried in the type system (`ChoiceShape` vs `ChoiceModel`) rather than in a comment.
+Fitting a discrimination slope needs observed clicks of known relevance, which a synthetic
+world does not have, so claiming those were fitted would be the dishonest part.
+
+The intercepts are fitted to reproduce the volumes the flat constants they replaced already
+produced — depth 6.62, add rate 0.14, conversion 0.55. That is the experimental design:
+holding volume fixed means any movement in the metrics is attributable to *composition*
+rather than to the population generating more or fewer events.
+
+**Why this matters more than it sounds.** Before it, a paired A/B over this simulator would
+have measured exactly zero, because the shopper found what they wanted regardless of what
+the store showed them. `measureSurfacePolicy` runs two arms over the same seed — identical
+shoppers, different grid order:
+
+| arm | depth | add rate | conv\|cart | selectivity | abandon | adds/session |
+| --- | --- | --- | --- | --- | --- | --- |
+| organic (popularity) | 6.55 | 0.142 | 0.545 | 0.346 | 0.462 | 0.93 |
+| oracle (latent truth) | 10.69 | 0.200 | 0.541 | 0.382 | 0.268 | **2.14** |
+| adversarial (reversed) | 0.10 | 0.050 | 0.436 | 0.003 | 0.995 | 0.01 |
+
+An oracle ranker more than doubles cart adds and cuts abandonment 42%. Note what does
+*not* move: conversion **given** a cart is flat across arms. Better ranking does not make a
+cart convert — it makes a cart happen. Any ROI story built on this simulator should
+attribute to add rate and abandonment, not to checkout.
+
+`sim:eval` also reports **selectivity**, the share of clicks landing in the top affinity
+quartile of the grid actually shown, where about 0.25 is a shopper indifferent to what
+they are shown. It is there because the first version of the choice model scored **0.27** —
+it was calibrated into the flat top of the sigmoid and clicked almost anything it examined —
+and nothing else in the output revealed it. It now reads 0.34, and the remaining gap to the
+oracle's 0.38 is reported as headroom rather than tuned away.
 
 Every product image is **drawn procedurally as SVG** from the taxonomy's team colours —
 jerseys, caps, beanies, helmets, crests, league badges. Nothing is fetched. The demo has
@@ -256,7 +305,47 @@ no external asset dependency and works with the network unplugged.
 
 ## 7. Offline results
 
-Run `npm run sim:eval`. Current output:
+Run `npm run sim:eval`.
+
+> ### ⚠️ Two generators. These numbers are not comparable to the previously published table.
+>
+> The harness code is unchanged. What the label it scores against **means** changed, when
+> the simulator gained a choice model and a session-level department intent. Both task
+> definitions are stated below and both tables are kept. The old one has **not** been
+> quietly re-run and replaced.
+>
+> **Harness A (retired).** Each click sampled independently from the shopper's stable
+> lifetime department affinity; a cart add was a uniform coin over what had been viewed.
+> The held-out target was the department of an anchor drawn near-arbitrarily from the
+> catalog's department mix. Predicting it meant *estimating a per-view multinomial* from
+> many draws of that same multinomial. Measured: the held-out anchor matched the shopper's
+> own modal department **18.3%** of the time.
+>
+> **Harness B (current).** A session draws one department intent at its start, the shopper
+> walks a surfaced grid, and clicks and cart adds run through the choice model. The
+> held-out target is the department of something the shopper actually *chose*. Predicting
+> it means *forecasting the next session's mission*. Measured: **43.3%**.
+
+### Harness B — current
+
+| Metric | R@1 | R@3 | R@10 | NDCG@10 | n |
+| --- | --- | --- | --- | --- | --- |
+| Intent — team | 40.0% | 72.5% | 100.0% | 69.7% | 2000 |
+| *popularity baseline* | *24.1%* | *68.0%* | *100.0%* | *62.0%* | *2000* |
+| **lift** | **1.66×** | | | **1.12×** | |
+| Intent — department | 27.7% | 64.4% | 100.0% | 62.5% | 2000 |
+| *popularity baseline* | *18.5%* | *65.8%* | *100.0%* | *58.2%* | *2000* |
+| **lift** | **1.50×** | | | **1.07×** | |
+| Complement — next item in basket | 2.9% | 6.8% | 20.8% | 8.8% | 954 |
+| *popular same-team baseline* | *2.7%* | *6.5%* | *18.8%* | *7.9%* | *954* |
+| **lift** | **1.08×** | | | **1.11×** | |
+| Similarity — held-out co-view | 7.8% | 20.7% | 50.5% | 8.2% | 1959 |
+| *popularity baseline* | *2.1%* | *5.0%* | *14.0%* | *2.0%* | *1959* |
+| **lift** | **3.63×** | | | **4.11×** | |
+
+### Harness A — retired, kept as a historical record
+
+Measured against a generator that no longer exists. Not re-run.
 
 | Metric | R@1 | R@3 | R@10 | NDCG@10 | n |
 | --- | --- | --- | --- | --- | --- |
@@ -273,11 +362,34 @@ Run `npm run sim:eval`. Current output:
 | *popularity baseline* | *1.1%* | *3.2%* | *8.9%* | *1.4%* | *2000* |
 | **lift** | **4.09×** | | | **4.43×** | |
 
+### How to read the difference
+
+Standard error on R@1 at n=2000 is about **1.1 points**, and the two tables come from
+different random worlds, so the comparison is unpaired and the error on a difference is
+larger again. **Movements under about 2 points are not resolvable.** The team result
+(1.1 points) does not clear that bar; the department result (8 points) and the similarity
+result (3.3 points) do.
+
+**Department went from the weakest engine to the second-strongest without a single line of
+the model changing.** Do not read that as the model improving. Harness A's department task
+was close to unlearnable — the thing being predicted barely depended on the shopper — so a
+popularity prior sat near the ceiling and there was nothing for personalisation to win.
+That is a broken question producing a flattering-looking baseline, not a weak model.
+
+**Complement is the honest negative result** and it is left standing. Its NDCG@10 lift fell
+from 1.37× to 1.11×: the engine barely moved, its baseline improved. Affinity-driven cart
+adds concentrate purchase anchors on more popular items — exactly what a popularity
+baseline feeds on — while basket construction was untouched, so the co-order graph gained
+little in exchange.
+
+**Similarity's absolute gain deserves a caveat.** R@1 nearly doubled partly because sessions
+are now homogeneous on *both* team and department, and the embedding encodes exactly those
+two axes. Part of that is the encoder re-reading structure the simulator made more obvious,
+not the encoder getting better. Its lift fell anyway, 4.09× to 3.63×, because the
+popularity baseline also nearly doubled.
+
 Every engine is measured against a popularity baseline, because "better than showing the
-best sellers" is the only bar that matters. Note that department intent barely beats its
-baseline at R@1 — that number is reported rather than hidden, and it is the honest result
-of a simulated world where department preference is genuinely weak signal early in a
-session.
+best sellers" is the only bar that matters.
 
 **Again: this is recovery of a data-generating process we wrote. It is not production
 accuracy.**

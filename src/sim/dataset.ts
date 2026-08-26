@@ -19,6 +19,7 @@
  */
 
 import { Product } from '../types';
+import { ChoiceModel } from './choice';
 import { generateCatalog } from './catalog';
 import {
   CoGraphs,
@@ -40,6 +41,14 @@ export interface Dataset {
    */
   graphScores: GraphScoreTable;
   customers: SyntheticCustomer[];
+  /**
+   * The choice model the behaviour was generated through, carrying its fitted
+   * intercepts and the calibration record that produced them. Exposed because a
+   * screen that reports a metric off this dataset should be able to state which
+   * parameters were fitted, against what target, and how close the fit landed -
+   * without that, "calibrated" is a word rather than a claim.
+   */
+  choice: ChoiceModel;
   stats: SimulationResult['stats'] & { catalogSize: number; buildMs: number };
 }
 
@@ -65,6 +74,7 @@ export function getDataset(): Dataset {
     graphs: simulation.graphs,
     graphScores,
     customers: simulation.customers,
+    choice: simulation.choice,
     stats: {
       ...simulation.stats,
       catalogSize: products.length,

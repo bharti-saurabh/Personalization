@@ -238,6 +238,19 @@ export interface ProfileClock {
  *
  * The new constants follow the same reasoning the department one was argued
  * from: how volatile is this preference actually?
+ *
+ * One note for whoever reads these next. DEPT_RECENCY_LAMBDA was moved to 0.08
+ * once already, because at the team rate department prediction scored below a
+ * plain popularity baseline. That measurement was taken under the retired
+ * generator ("Harness A" - see the header of evaluate.ts), where the department
+ * of a purchased item barely depended on the shopper at all and the task was
+ * close to unlearnable. Under the current generator the same engine, unchanged,
+ * runs 1.50x over its baseline. So the original justification for 0.08 no
+ * longer describes the world it was fitted to, and the constant is now
+ * unexamined rather than wrong - it has simply never been checked against a
+ * task that could distinguish good settings from bad ones. Re-deriving it is
+ * legitimate work. Nudging it until the metric improves is not, and the
+ * difference between the two is whether the target is written down first.
  */
 export const TEAM_RECENCY_LAMBDA = 0.35;
 export const DEPT_RECENCY_LAMBDA = 0.08;

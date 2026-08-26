@@ -12,8 +12,17 @@
  *    baked in at build time. A reviewer can change the sample size and watch
  *    the figures move, which is much harder to fake than a screenshot.
  *  - Each engine's caveat sits in the same card as its numbers, not in a
- *    footnote. The department result trails its baseline at Recall@3, and the
+ *    footnote. The complement engine lost ground to its own baseline, and the
  *    card says so next to the bar that shows it.
+ *
+ * The Harness A / Harness B section is the third choice and the least
+ * comfortable one. When the simulator gained a choice model and a session-level
+ * department intent, the harness code did not change but the meaning of the
+ * label it scores against did. The obvious move was to re-run and replace the
+ * table. That would have shown department improving from 1.12x to 1.50x and
+ * invited everyone to read it as the model getting better, when the model was
+ * never touched. So both tables stay, both task definitions are stated, and the
+ * retired one is labelled as a measurement of a world that no longer exists.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -89,7 +98,7 @@ const PANELS: EnginePanel[] = [
     baseline: (r) => r.intentTeamBaseline,
     verdict: () => ({
       tone: 'strong',
-      text: 'Clearly ahead of popularity. The recency-weighted sequence model is doing real work: it nearly doubles Recall@1 and holds a lead through the full ranked list.',
+      text: 'Clearly ahead of popularity, and the recency-weighted sequence model is doing real work. The lift is lower than the retired harness reported (1.66x against 1.93x) and that is the baseline improving rather than the engine degrading - orders concentrate harder on the focus team now, which a rank-by-order-volume baseline collects more of than the model does.',
     }),
   },
   {
@@ -102,7 +111,7 @@ const PANELS: EnginePanel[] = [
     baseline: (r) => r.similarityBaseline,
     verdict: () => ({
       tone: 'strong',
-      text: 'The strongest and the most meaningful result, because the target is held-out behaviour rather than the metadata the embedding was built from. The engine is not simply re-reading its own inputs.',
+      text: 'The strongest result, and the most meaningful, because the target is held-out behaviour rather than the metadata the embedding was built from. One caveat belongs next to it: absolute Recall@1 nearly doubled when the simulator gained session-level department intent, because sessions became homogeneous on both team and department - the two axes this embedding encodes. Part of that gain is the encoder re-reading structure the simulator made more obvious, not the encoder getting better.',
     }),
   },
   {
@@ -114,8 +123,8 @@ const PANELS: EnginePanel[] = [
     model: (r) => r.complement,
     baseline: (r) => r.complementBaseline,
     verdict: () => ({
-      tone: 'fair',
-      text: 'Ties popularity at rank 1 but beats it substantially in ranking depth. The tie is structural rather than a defect - the single likeliest companion for an anchor genuinely is the team bestseller, so both methods name it first. The engine earns its keep from rank 2 down, which is where a carousel actually lives.',
+      tone: 'weak',
+      text: 'The weak one, and it got weaker: NDCG@10 lift fell from 1.37x to 1.11x when the choice model landed. The engine barely moved; its baseline improved. Cart adds are now driven by affinity, which concentrates purchase anchors on more popular items - exactly what a popularity baseline feeds on - while basket construction was left untouched, so the co-order graph gained little in exchange. This is the honest negative result on this screen and it is left standing rather than tuned away.',
     }),
   },
   {
@@ -127,8 +136,8 @@ const PANELS: EnginePanel[] = [
     model: (r) => r.intentDept,
     baseline: (r) => r.intentDeptBaseline,
     verdict: (r) => ({
-      tone: 'weak',
-      text: `The weakest of the four, and it still trails its baseline at Recall@3 (${pct(r.intentDept.recallAt3)} against ${pct(r.intentDeptBaseline.recallAt3)}). Department preference in the simulator is drawn as a perturbation of the assortment weights, so the popularity prior is already close to the right answer and there is little headroom to win. A real catalog, where department affinity is far less correlated with assortment mix, would give a personalised model more to find - but that is an argument for measuring it on real data, not a claim that it would.`,
+      tone: 'strong',
+      text: `Now the second-strongest engine at ${(r.intentDept.recallAt1 / Math.max(1e-9, r.intentDeptBaseline.recallAt1)).toFixed(2)}x Recall@1, having been the weakest at 1.12x under the retired harness. Nothing in the engine changed. The TARGET became learnable: a purchase anchor used to be drawn near-arbitrarily from the catalog's department mix and matched the shopper's own preferred department only 18.3% of the time, against 43.3% now that shoppers choose what they cart. The old number was measuring a broken question, not a broken model - and this one must not be reported as a modelling improvement. See the harness note below.`,
     }),
   },
 ];
@@ -367,6 +376,116 @@ export const ModelEvidence: React.FC = () => {
           ))}
         </div>
       )}
+
+      {/* Harness comparability - see the file header for why this is here. */}
+      <div className="bg-white rounded-2xl border border-amber-300 shadow-xs overflow-hidden">
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
+          <div>
+            <h2 className="text-sm font-extrabold uppercase tracking-widest text-amber-900">
+              These numbers are not comparable to the previous published table
+            </h2>
+            <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+              The harness code is unchanged. What the label it scores against <i>means</i> changed, when the simulator
+              gained a calibrated choice model and a session-level department intent. Both definitions are below.
+              Neither table has been quietly replaced.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+          <div className="p-6 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-widest bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
+                Harness A
+              </span>
+              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Retired generator</span>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Every click sampled independently from the shopper's stable lifetime department affinity, and a cart add
+              was a uniform coin over whatever had been viewed. The held-out target was the department of an anchor
+              drawn near-arbitrarily from the catalog's department mix. Predicting it meant{' '}
+              <b className="text-slate-800">estimating a per-view multinomial</b> from many draws of that same
+              multinomial.
+            </p>
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-[11px] font-mono text-slate-600 space-y-1">
+              <div className="flex justify-between">
+                <span>held-out anchor matched shopper's modal dept</span>
+                <b className="text-slate-900">18.3%</b>
+              </div>
+              <div className="flex justify-between">
+                <span>department R@1 / baseline / lift</span>
+                <b className="text-slate-900">19.7% / 17.5% / 1.12x</b>
+              </div>
+              <div className="flex justify-between">
+                <span>team / similarity / complement lift (R@1)</span>
+                <b className="text-slate-900">1.93x / 4.09x / 1.00x</b>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed italic">
+              Recorded historical measurement of a generator that no longer exists. Not re-run.
+            </p>
+          </div>
+
+          <div className="p-6 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-widest bg-emerald-600 text-white px-2 py-0.5 rounded">
+                Harness B
+              </span>
+              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">
+                Current generator - the table above
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              A session draws one department intent at its start, the shopper walks a surfaced grid, and clicks and cart
+              adds run through a calibrated choice model that reads affinity. The held-out target is the department of
+              something the shopper actually chose. Predicting it means{' '}
+              <b className="text-slate-800">forecasting the next session's mission</b>.
+            </p>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-[11px] font-mono text-emerald-900 space-y-1">
+              <div className="flex justify-between">
+                <span>held-out anchor matched shopper's modal dept</span>
+                <b>43.3%</b>
+              </div>
+              {report && (
+                <>
+                  <div className="flex justify-between">
+                    <span>department R@1 / baseline / lift</span>
+                    <b>
+                      {pct(report.intentDept.recallAt1)} / {pct(report.intentDeptBaseline.recallAt1)} /{' '}
+                      {(report.intentDept.recallAt1 / Math.max(1e-9, report.intentDeptBaseline.recallAt1)).toFixed(2)}x
+                    </b>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>team / similarity / complement lift (R@1)</span>
+                    <b>
+                      {(report.intentTeam.recallAt1 / Math.max(1e-9, report.intentTeamBaseline.recallAt1)).toFixed(2)}x /{' '}
+                      {(report.similarity.recallAt1 / Math.max(1e-9, report.similarityBaseline.recallAt1)).toFixed(2)}x /{' '}
+                      {(report.complement.recallAt1 / Math.max(1e-9, report.complementBaseline.recallAt1)).toFixed(2)}x
+                    </b>
+                  </div>
+                </>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed italic">
+              Live, from the run above. Sample size is whatever is set at the top of this screen.
+            </p>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-200 bg-slate-50 px-6 py-4">
+          <p className="text-xs text-slate-600 leading-relaxed">
+            <b className="text-slate-800">The one conclusion to take from the pair.</b> Department prediction went from
+            the weakest engine to the second-strongest without a single line of the model changing. Harness A's
+            department task was close to unlearnable - the thing being predicted barely depended on the shopper - so a
+            popularity prior was already near the ceiling and there was nothing for personalisation to win. That is a
+            broken question producing a flattering-looking baseline, not a weak model. It is also the reason this
+            screen shows both: a lift number is a statement about a task and a baseline as much as about an engine, and
+            a table that silently changes its task underneath a stable-looking metric is the most common way an
+            evaluation misleads without anyone lying.
+          </p>
+        </div>
+      </div>
 
       {/* Protocol */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

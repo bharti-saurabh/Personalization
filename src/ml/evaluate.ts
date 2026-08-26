@@ -35,32 +35,68 @@
  *             Behavioural, so it does not simply re-read the metadata the
  *             embedding was built from.
  *
- * WHAT THE CURRENT RUN ACTUALLY SHOWS
- * -----------------------------------
+ * TWO GENERATORS, TWO TASKS - READ THIS BEFORE COMPARING ANY TWO TABLES
+ * ---------------------------------------------------------------------
+ * The code in this file is unchanged. What the labels it scores against MEAN
+ * changed, when the simulator gained a choice model and a session-level
+ * department intent. Numbers from the two generators are NOT comparable, and
+ * both definitions are stated so nobody has to guess which one a table is from.
+ *
+ *  Harness A (retired generator). Each click sampled independently from the
+ *    shopper's stable lifetime department affinity, and a cart add was a uniform
+ *    coin over what had been viewed. The held-out target was therefore the
+ *    department of an anchor drawn near-arbitrarily from the catalog's
+ *    department mix. Predicting it means ESTIMATING A PER-VIEW MULTINOMIAL from
+ *    many draws of that same multinomial. Measured: the held-out anchor matched
+ *    the shopper's own modal department only 18.3% of the time.
+ *
+ *  Harness B (current generator). A session draws one department intent at its
+ *    start, the shopper walks a surfaced grid, and clicks and cart adds run
+ *    through a calibrated choice model that reads affinity. The held-out target
+ *    is the department of something the shopper actually chose. Predicting it
+ *    means FORECASTING THE NEXT SESSION'S MISSION. Measured: the held-out anchor
+ *    matches the shopper's modal department 43.3% of the time.
+ *
+ * Harness A's department task was close to unlearnable - which is why the engine
+ * scored 19.7% there against an 17.5% popularity baseline and looked weak. It
+ * was not a weak engine. It was a broken question. The engines themselves were
+ * not modified in that change.
+ *
+ * WHAT THE CURRENT RUN ACTUALLY SHOWS  (Harness B)
+ * ------------------------------------------------
  * Reported as measured, including the parts that are unflattering. Tuning any
  * of these until they looked better would defeat the purpose of running them.
  *
- *  Team intent      Clearly ahead of popularity - R@1 1.9x, NDCG@10 1.2x. The
- *                   recency-weighted sequence model is doing real work here.
- *  Similarity       The strongest result - R@1 4.4x, NDCG@10 4.2x - and the
+ *  Team intent      Clearly ahead of popularity - R@1 1.66x, NDCG@10 1.12x. The
+ *                   recency-weighted sequence model is doing real work. The lift
+ *                   is lower than Harness A's 1.93x, and that is the baseline
+ *                   improving rather than the model degrading: focus-team
+ *                   concentration in orders rose, which a rank-by-order-volume
+ *                   baseline collects more of than the model does.
+ *  Similarity       Still the strongest - R@1 3.63x, NDCG@10 4.11x - and the
  *                   most meaningful, because the target is held-out behaviour
  *                   rather than the metadata the embedding was built from.
- *  Complement       Ties popularity at rank 1 but beats it substantially in
- *                   ranking depth (NDCG@10 1.4x, R@10 1.4x). The tie is
- *                   structural, not a defect: the single likeliest companion
- *                   for an anchor genuinely is the team's bestseller, so both
- *                   methods name it first. The model earns its keep from rank
- *                   2 down, which is exactly where a carousel lives.
- *  Department       Only marginally ahead - R@1 1.15x - and it still trails
- *                   the baseline at R@3. This is the weakest engine of the
- *                   four and it is worth being plain about why. Department
- *                   preference in the simulator is drawn as a perturbation of
- *                   the assortment weights, so the popularity prior is already
- *                   close to the right answer and there is little headroom to
- *                   win. A real catalog, where department affinity is far less
- *                   correlated with assortment mix, would give a personalised
- *                   model more to find - but that is an argument for measuring
- *                   it on real data, not a claim that it would.
+ *                   Caveat that belongs next to the number: absolute R@1 nearly
+ *                   doubled under Harness B partly because sessions are now
+ *                   homogeneous on both team and department, and the embedding
+ *                   encodes exactly those two axes. Some of that gain is the
+ *                   encoder re-reading structure the simulator made more
+ *                   blatant, not the encoder improving.
+ *  Department       Now the second-strongest - R@1 1.50x - having been the
+ *                   weakest at 1.12x under Harness A. Nothing in the model
+ *                   changed. The target became learnable. Do not report this as
+ *                   a modelling improvement.
+ *  Complement       The weak one now: R@1 1.08x, NDCG@10 1.11x, down from 1.37x
+ *                   NDCG under Harness A. It lost ground to its own baseline.
+ *                   Anchors now concentrate on more popular items - exactly what
+ *                   a popularity baseline feeds on - while basket construction
+ *                   was untouched, so the co-order graph gained little. This is
+ *                   the honest negative result in the set and it is left standing.
+ *
+ * The n=2000 standard error on R@1 is about 1.1 points, and comparisons across
+ * the two generators are unpaired, so anything under ~2 points of movement is
+ * not resolvable. The department result (8 points) and the similarity result
+ * (3.3 points) clear that bar. The team result (1.1 points) does not.
  */
 
 import { Department, Product, Scenario, TeamId, UserEvent } from '../types';

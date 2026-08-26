@@ -71,6 +71,30 @@ const BASKET_CONCENTRATION = 2.2;
  * has to be finite, because an infinite grid would let a patient shopper find
  * anything and there would be no such thing as burying an item.
  */
+/**
+ * How much a session's own department intent suppresses everything outside it.
+ *
+ * A statement about the shopper: an item outside today's mission is worth about
+ * a quarter of an equivalent item inside it. Not fitted, and deliberately not
+ * fitted against any evaluation metric.
+ *
+ * It was first aimed at an observable target - 70% of a session's views landing
+ * in one department - and that target turned out to be unreachable at any gate
+ * value. Sweeping the gate from 0.05 to 0.45 moved realised concentration by
+ * less than a point, from 0.386 to 0.380. The reason is worth stating, because
+ * it is the finding rather than the obstacle: the shopper can only click what
+ * the grid shows, the organic grid is ordered by popularity across every
+ * department, and the mission's department is about an eighth of it. Intent
+ * exists in the shopper and the store gives them no way to act on it.
+ *
+ * That gap - between what the shopper came for and what they end up looking at -
+ * is exactly the headroom personalisation is meant to capture, and
+ * `measureSurfacePolicy` now shows it is worth about 130% more cart adds per
+ * session against an oracle ranker. Closing it properly needs site navigation
+ * in the simulator, which is a larger change and its own piece of work.
+ */
+const DEPT_OFF_FOCUS_GATE = 0.24;
+
 const SURFACE_DEPTH = 48;
 
 /**
@@ -123,6 +147,13 @@ const CALIBRATION_ROUNDS = 2;
 
 export interface SimSession {
   focusTeam: TeamId;
+  /**
+   * Share of this session's clicks that landed in the top affinity quartile of
+   * the grid it was shown. Per-session because it is a property of the grid.
+   */
+  discrimination: number;
+  /** Sum of the grid positions of this session's clicks. */
+  clickPositionSum: number;
   /**
    * The department the shopper came in for.
    *
@@ -222,6 +253,17 @@ export interface SimulationResult {
       scrolledPast: number;
       /** Share of sessions ended by the shopper leaving rather than by running out of grid. */
       abandonRate: number;
+      /**
+       * Share of clicks landing in the top affinity quartile of the grid that
+       * was shown, averaged over sessions. Indifference is about 0.25.
+       *
+       * This is the number that says whether the simulated shopper is actually
+       * a shopper. It is reported rather than assumed because the first version
+       * of the choice model was close to indifferent - it clicked things it did
+       * not want almost as readily as things it did - and nothing else in the
+       * output showed it. See the note on CHOICE_SHAPE.
+       */
+      discrimination: number;
     };
   };
 }
@@ -328,16 +370,27 @@ function productAffinityScore(
   focusTeam: TeamId,
   focusDept: Department
 ): number {
+  // Standing taste: what this shopper likes in general, unchanged from before.
   const teamTerm = product.team === focusTeam ? 1.0 : customer.teamAffinity[product.team] * 0.35;
-  const deptTerm =
-    product.department === focusDept ? 1.0 : customer.deptAffinity[product.department] * 0.35;
+  const deptTerm = customer.deptAffinity[product.department];
+  const standingTaste = Math.max(1e-4, teamTerm * 0.5 + deptTerm * 0.3);
+
+  // Today's mission, applied as a gate rather than as a fourth additive term.
+  // The additive form was tried first and it does not work: team and department
+  // compete for the same fixed mass there, so a session cannot be made more
+  // department-focused without being made less team-focused, and the strongest
+  // honest setting still left the focus department at only ~1.45:1 over its
+  // rivals. A gate says something different and truer - standing taste decides
+  // what you would like, session intent decides what you came for today.
+  const intentGate = product.department === focusDept ? 1 : DEPT_OFF_FOCUS_GATE;
+
   const popularityTerm = product.popularity / 100;
 
   // Price sensitivity pushes shoppers toward the cheaper end of the assortment.
   const effectivePrice = product.salePrice ?? product.price;
   const priceTerm = 1 - customer.priceSensitivity * Math.min(1, effectivePrice / 200);
 
-  return Math.max(1e-4, teamTerm * 0.5 + deptTerm * 0.3) * (0.35 + popularityTerm * 0.65) * priceTerm;
+  return standingTaste * intentGate * (0.35 + popularityTerm * 0.65) * priceTerm;
 }
 
 /**
@@ -404,6 +457,22 @@ export type SurfacePolicy = (
   focusTeam: TeamId,
   focusDept: Department
 ) => number[];
+
+/**
+ * The affinity value at the 75th percentile of a grid.
+ *
+ * Used to score selectivity as the share of a session's clicks landing in the
+ * quarter of the grid the shopper most wanted. A ratio of click probabilities
+ * was tried first and is the wrong statistic: the bottom of a real grid holds
+ * off-team strays whose relevance is near zero, so the ratio divides by
+ * approximately nothing and reports five-figure numbers that mean nothing. A
+ * share is bounded, and it degrades gracefully.
+ */
+function topQuartileThreshold(affinities: number[]): number {
+  if (affinities.length === 0) return Infinity;
+  const sorted = affinities.slice().sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length * 0.75)];
+}
 
 function surfaceOrganic(rng: Rng, candidates: number[], products: Product[]): number[] {
   const n = candidates.length;
@@ -548,6 +617,8 @@ function simulateSession(
   const empty: SimSession = {
     focusTeam,
     focusDept,
+    discrimination: 0,
+    clickPositionSum: 0,
     viewed: [],
     carted: [],
     ordered: [],
@@ -563,7 +634,26 @@ function simulateSession(
     : surfaceOrganic(rng, candidates, products);
 
   const affinities = surfaced.map((i) => productAffinityScore(products[i], customer, focusTeam, focusDept));
+
   const outcome = browse(rng, surfaced, affinities, model);
+
+  // Selectivity, conditioned within this one grid - the comparison that means
+  // something is between two items the same shopper saw on the same visit.
+  // Reference point is 0.25: a shopper who clicks without regard to what the
+  // item is scatters their clicks evenly across the grid's affinity quartiles.
+  // The organic grid is popularity-ordered and popularity feeds affinity, so
+  // the true indifference level sits a little above 0.25 rather than exactly on
+  // it; the statistic is a check for gross insensitivity, not a hypothesis test.
+  const threshold = topQuartileThreshold(affinities);
+  let topClicks = 0;
+  let clickPositionSum = 0;
+  for (const idx of outcome.viewed) {
+    const at = surfaced.indexOf(idx);
+    if (at < 0) continue;
+    clickPositionSum += at;
+    if (affinities[at] >= threshold) topClicks++;
+  }
+  const discrimination = outcome.viewed.length > 0 ? topClicks / outcome.viewed.length : 0;
 
   // Conversion now reads the cart rather than a coin. A cart full of things the
   // shopper wanted converts better than a cart full of things they did not,
@@ -602,6 +692,8 @@ function simulateSession(
   return {
     focusTeam,
     focusDept,
+    discrimination,
+    clickPositionSum,
     viewed: outcome.viewed,
     carted: outcome.carted,
     ordered,
@@ -756,6 +848,80 @@ function calibrateChoiceModel(
   return model;
 }
 
+/** Aggregate outcome of one arm of a surfacing experiment. */
+export interface ArmResult {
+  sessions: number;
+  depth: number;
+  addRate: number;
+  conversion: number;
+  /** Share of clicks landing in the grid's top affinity quartile. */
+  selectivity: number;
+  abandonRate: number;
+  /** Mean grid position of a click. Lower is a shopper finding things sooner. */
+  meanClickPosition: number;
+}
+
+/**
+ * Runs one surfacing policy against a fresh population and reports what it did.
+ *
+ * This exists because the surfacing seam is only worth having if something can
+ * measure through it. Both arms draw their shoppers from the same seed, so the
+ * two populations are identical shopper for shopper and the comparison is
+ * paired: any difference is the ordering of the grid and nothing else.
+ *
+ * Pass `null` for the organic popularity-ordered grid.
+ */
+export function measureSurfacePolicy(
+  products: Product[],
+  policy: SurfacePolicy | null,
+  seed: string = BEHAVIOR_SEED,
+  shoppers = 4000
+): ArmResult {
+  const rng = new Rng(`${seed}:experiment`);
+  const { byTeam, byTeamDept } = buildBuckets(products);
+  const choice = calibrateChoiceModel(products, byTeam, byTeamDept, seed);
+
+  let sessions = 0;
+  let views = 0;
+  let carts = 0;
+  let withCart = 0;
+  let converted = 0;
+  let abandoned = 0;
+  let selectivity = 0;
+  let clickPositionSum = 0;
+  let clickPositionN = 0;
+
+  for (let c = 0; c < shoppers; c++) {
+    const customer = drawCustomer(rng, `arm-${c}`);
+    const sessionCount = Math.max(2, Math.min(7, Math.round(rng.logNormal(Math.log(3.2), 0.45))));
+    for (let i = 0; i < sessionCount; i++) {
+      const session = simulateSession(rng, customer, products, byTeam, byTeamDept, choice, policy ?? undefined);
+      sessions++;
+      views += session.viewed.length;
+      carts += session.carted.length;
+      selectivity += session.discrimination;
+      if (session.abandoned) abandoned++;
+      if (session.carted.length > 0) {
+        withCart++;
+        if (session.ordered.length > 0) converted++;
+      }
+      clickPositionSum += session.clickPositionSum;
+      clickPositionN += session.viewed.length;
+    }
+  }
+
+  const r = (v: number, d: number) => Number((v / Math.max(1, d)).toFixed(4));
+  return {
+    sessions,
+    depth: r(views, sessions),
+    addRate: r(carts, views),
+    conversion: r(converted, withCart),
+    selectivity: r(selectivity, sessions),
+    abandonRate: r(abandoned, sessions),
+    meanClickPosition: r(clickPositionSum, clickPositionN),
+  };
+}
+
 export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SEED): SimulationResult {
   const startedAt = performance.now();
   const rng = new Rng(seed);
@@ -792,6 +958,7 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
   let allSlotsWalked = 0;
   let allScrolledPast = 0;
   let allAbandoned = 0;
+  let allDiscrimination = 0;
 
   for (let c = 0; c < POPULATION_SIZE; c++) {
     const { affinity, loyalty } = drawTeamAffinity(rng);
@@ -819,6 +986,7 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
       allSlotsWalked += session.slotsWalked;
       allScrolledPast += session.scrolledPast;
       if (session.abandoned) allAbandoned++;
+      allDiscrimination += session.discrimination;
       if (session.carted.length > 0) {
         allSessionsWithCart++;
         if (session.ordered.length > 0) allConverted++;
@@ -909,6 +1077,7 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
         slotsWalked: perSession(allSlotsWalked),
         scrolledPast: perSession(allScrolledPast),
         abandonRate: Number((allAbandoned / Math.max(1, allSessions_)).toFixed(4)),
+        discrimination: perSession(allDiscrimination),
       },
     },
   };

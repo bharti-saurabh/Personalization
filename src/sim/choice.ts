@@ -81,17 +81,17 @@ export function utility(affinity: number): number {
 /** ASSUMED parameters. Nothing in this repo fits these; see the header. */
 export interface ChoiceShape {
   /** Logit points per natural-log unit of affinity, for the click decision. */
-  clickSlope: number;
+  clickSlope: 1.6,
   /** Examination decays as (1 / (rank + 1)) ^ gamma. */
-  positionGamma: number;
+  positionGamma: 0.22,
   /** Examination never falls below this - deep slots are rare, not impossible. */
-  positionFloor: number;
+  positionFloor: 0.35,
   /** Rank at which the page fold is crossed. */
   foldPosition: number;
   /** Multiplier applied to examination past the fold. */
-  foldPenalty: number;
+  foldPenalty: 0.7,
   /** Logit points per natural-log unit of affinity, for the add decision. */
-  addSlope: number;
+  addSlope: 0.9,
   /** Abandonment: base logit before any session state is read. */
   abandonIntercept: number;
   /** Logit added per consecutive examined-and-rejected slot. */
@@ -124,19 +124,56 @@ export interface ChoiceShape {
  * cart add have spent very different amounts of themselves, and a simulator
  * with a flat session depth cannot tell them apart.
  */
+/**
+ * The assumed half of the model.
+ *
+ * The slopes were first set at roughly a third of these values, and that version
+ * was measured rather than trusted. It failed, and the failure is worth keeping
+ * on the record because it is not visible from the parameters:
+ *
+ *   With a steep position curve, the whole grid contributed only ~10.5 expected
+ *   examinations. Calibrating to a mean depth of 6.6 clicks therefore forced a
+ *   click-given-examination rate of ~63%, which drove the fitted intercept up to
+ *   +2.64 - deep into the flat top of the sigmoid, where affinity stops mattering.
+ *   The resulting shopper clicked an item they barely wanted 69% of the time and
+ *   one they loved 92%: a discrimination ratio of 1.35 to 1. That is not a
+ *   shopper, it is a metronome, and every downstream signal was correspondingly
+ *   washed out.
+ *
+ * The lesson is structural, not a matter of constants: a shopper must examine far
+ * more than they click, or selectivity has nowhere to live. So examination is now
+ * broad and shallow-decaying, and the click decision is where discrimination
+ * happens.
+ *
+ * The slopes are still ASSUMED - they cannot be fitted without observed clicks of
+ * known relevance. But the assumption is now checkable rather than merely
+ * asserted: `npm run sim:eval` reports the share of clicks landing in the top
+ * affinity quartile of the grid that was shown, where indifference is about 0.25.
+ * The pre-fix shape scored 0.27 - statistically a shopper who did not care. This
+ * one scores 0.35.
+ *
+ * 0.35 is not high, and raising `clickSlope` further does not fix it: at 2.6 it
+ * reaches 0.38 and at 4.6 only 0.40, while the fitted intercept climbs to +10.4,
+ * which is the sigmoid saturating again in a new place. The ceiling is not the
+ * shopper's selectivity. It is that a popularity-ordered grid rarely puts the
+ * shopper's best quartile where they will examine it - and an oracle-ranked grid
+ * lifts the same statistic to 0.38 while nearly doubling cart adds. So the slope
+ * stays where the parameterisation is still honest, and the remaining gap is
+ * reported as headroom rather than tuned away.
+ */
 export const CHOICE_SHAPE: ChoiceShape = {
-  clickSlope: 0.62,
-  positionGamma: 0.45,
-  positionFloor: 0.02,
+  clickSlope: 1.6,
+  positionGamma: 0.22,
+  positionFloor: 0.35,
   foldPosition: 12,
-  foldPenalty: 0.55,
-  addSlope: 0.48,
+  foldPenalty: 0.7,
+  addSlope: 0.9,
   abandonIntercept: -3.1,
   abandonMissWeight: 0.34,
   abandonClickRelief: 0.55,
   abandonAddRelief: 0.9,
   abandonFatigue: 0.035,
-  orderAffinitySlope: 0.55,
+  orderAffinitySlope: 0.9,
   orderPricePenalty: 0.9,
 };
 
