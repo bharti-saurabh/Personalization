@@ -13,7 +13,7 @@
     "sim:eval": "tsx scripts/evaluate.ts",
     "sim:imagery": "tsx scripts/render-imagery.tsx",
     "build:single": "node scripts/build-singlefile.mjs",
-    "test": "tsx --test src/ml/profile.test.ts"
+    "test": "tsx --test src/ml/*.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

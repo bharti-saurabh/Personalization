@@ -51,6 +51,8 @@ import {
 } from '../sim/taxonomy';
 import { scorePersona } from './persona';
 import type { PersonaBlock, PersonaFeatures } from './persona';
+import { seedWrites } from './identity';
+import type { IdentitySeed, SeedWrite } from './identity';
 
 /* ------------------------------------------------------------------ types -- */
 
@@ -73,9 +75,15 @@ export interface Confidence {
   decayLambda: number;
 }
 
-/** One event's contribution to a field, kept so the panel can name its causes. */
+/**
+ * One contribution to a field, kept so the panel can name its causes.
+ *
+ * `eventId` is null when the cause was not an event - an identity seed, a CRM
+ * record, an order history. Those are real contributions with real weights;
+ * they simply have no click behind them to point at.
+ */
 export interface DistDriver {
-  eventId: string;
+  eventId: string | null;
   contribution: number;
   label: string;
 }
@@ -162,6 +170,8 @@ export interface VisitorProfile {
     impressionFatigue: Record<string, number>;
     /** Rivalry suppression, written by workstream 6. */
     suppressedTeams: TeamId[];
+    /** Set at the `member` rung. Null at every rung below it. */
+    loyaltyTier: string | null;
   };
 
   /** How many events have been folded in. The fold's tick counter. */
@@ -169,7 +179,7 @@ export interface VisitorProfile {
   updatedAt: number;
 }
 
-export type DeltaKind = 'observation' | 'propagation' | 'state' | 'seed';
+export type DeltaKind = 'observation' | 'propagation' | 'state' | 'seed' | 'promotion';
 
 /**
  * One field write.
@@ -712,6 +722,7 @@ export function createProfile(
       recentPurchases: [],
       impressionFatigue: {},
       suppressedTeams: [],
+      loyaltyTier: null,
     },
     observedEvents: 0,
     updatedAt: clock.now,
@@ -992,14 +1003,17 @@ export function applyEvent(
 export function buildProfile(
   scenario: Scenario,
   events: UserEvent[],
-  clock: ProfileClock = { now: 0 }
+  clock: ProfileClock = { now: 0 },
+  seed?: IdentitySeed
 ): ProfileUpdate {
-  const isAnonymous = scenario.profileType === 'Anonymous';
-  let profile = createProfile(
-    `visitor-${scenario.id}`,
-    isAnonymous ? 'anonymous' : 'member',
-    clock
-  );
+  const isAnonymous = seed ? seed.state === 'anonymous' : scenario.profileType === 'Anonymous';
+  const identityState: IdentityState = seed
+    ? seed.state
+    : scenario.profileType === 'Anonymous'
+      ? 'anonymous'
+      : 'member';
+
+  let profile = createProfile(`visitor-${scenario.id}`, identityState, clock);
 
   const deltas: ProfileDelta[] = [];
 
@@ -1012,11 +1026,21 @@ export function buildProfile(
     },
   };
 
+  // When an identity seed is supplied the ladder governs entirely: it decides
+  // what is known at this rung, including the order history the legacy branch
+  // below would otherwise assume. The two never both run - a profile seeded
+  // twice would double-count its own history.
+  if (seed) {
+    const seeded = applySeedWrites(profile, seedWrites(seed), clock);
+    profile = seeded.profile;
+    deltas.push(...seeded.deltas);
+  }
+
   // Prior orders are strong, durable evidence, but they are history: they enter
   // as pseudo-counts at a fixed discount rather than competing with live clicks.
   // Identical arithmetic to intent.ts's historical term, so a profile-fed
   // prediction and an event-fed one start from the same place.
-  if (!isAnonymous) {
+  if (!seed && !isAnonymous) {
     const historicalWeight = Math.min(3.0, Math.log1p(scenario.historicalOrdersCount) * 1.1);
     let team = profile.affinities.team;
     let league = profile.affinities.league;
@@ -1054,4 +1078,322 @@ export function buildProfile(
   }
 
   return { profile, deltas };
+}
+
+/* ------------------------------------------------------- identity seeding -- */
+
+/**
+ * Which channel a seed lands in, decided by what kind of claim it is.
+ *
+ * A declared fact - a CRM record, a completed order - is durable and does not
+ * age at the click rate. An inference - a regional prior, a device skew - is
+ * exactly the kind of weak guess that live behaviour should be free to
+ * overwrite, so it goes in the session channel and fades like anything else.
+ * The rule is the source, not the rung, because it is the nature of the claim
+ * that decides how long it should survive.
+ */
+function channelFor(source: ProfileSource): 'session' | 'seed' {
+  return source === 'history' || source === 'crm' ? 'seed' : 'session';
+}
+
+/**
+ * Applies a rung's evidence to a profile.
+ *
+ * Same shape as `applyEvent` and for the same reason: it is a fold step, it
+ * returns a new profile and its deltas, and it mutates nothing. Promotion
+ * re-runs this from the prior-only constructor rather than patching what is
+ * already there - see `promoteProfile`.
+ */
+export function applySeedWrites(
+  profile: VisitorProfile,
+  writes: SeedWrite[],
+  clock: ProfileClock = { now: profile.updatedAt }
+): ProfileUpdate {
+  if (writes.length === 0) return { profile, deltas: [] };
+
+  const before = profile;
+
+  let league = profile.affinities.league;
+  let team = profile.affinities.team;
+  let player = profile.affinities.player;
+  let department = profile.affinities.department;
+  let gender = profile.traits.gender;
+  let ageBand = profile.traits.ageBand;
+  let priceSensitivity = profile.traits.priceSensitivity;
+  let giftIntent = profile.traits.giftIntent;
+  const sizeProfile = { ...profile.traits.sizeProfile };
+  let region = profile.traits.region;
+  let lifetimeOrders = profile.state.lifetimeOrders;
+  let loyaltyTier = profile.state.loyaltyTier;
+
+  const leagueWrites: PendingWrite<League>[] = [];
+  const teamWrites: PendingWrite<TeamId>[] = [];
+  const playerWrites: PendingWrite<PlayerId>[] = [];
+  const deptWrites: PendingWrite<Department>[] = [];
+  const genderWrites: PendingWrite<GenderTrait>[] = [];
+  const ageWrites: PendingWrite<AgeBand>[] = [];
+  const other: ProfileDelta[] = [];
+
+  for (const w of writes) {
+    if (w.weight <= 0) continue;
+    const driver = { eventId: null, contribution: w.weight, label: w.label };
+    const channel = channelFor(w.source);
+    const pending = { contribution: w.weight, kind: 'seed' as DeltaKind, label: w.label, eventId: null };
+
+    switch (w.field) {
+      case 'league':
+        league = addEvidence(league, w.key as League, w.weight, driver, channel);
+        leagueWrites.push({ ...pending, path: 'affinities.league.posterior', key: w.key as League });
+        break;
+      case 'team':
+        team = addEvidence(team, w.key as TeamId, w.weight, driver, channel);
+        teamWrites.push({ ...pending, path: 'affinities.team.posterior', key: w.key as TeamId });
+        break;
+      case 'player':
+        player = addEvidence(player, w.key as PlayerId, w.weight, driver, channel);
+        playerWrites.push({ ...pending, path: 'affinities.player.posterior', key: w.key as PlayerId });
+        break;
+      case 'department':
+        department = addEvidence(department, w.key as Department, w.weight, driver, channel);
+        deptWrites.push({ ...pending, path: 'affinities.department.posterior', key: w.key as Department });
+        break;
+      case 'gender':
+        gender = addEvidence(gender, w.key as GenderTrait, w.weight, driver, channel);
+        genderWrites.push({ ...pending, path: 'traits.gender.posterior', key: w.key as GenderTrait });
+        break;
+      case 'ageBand':
+        ageBand = addEvidence(ageBand, w.key as AgeBand, w.weight, driver, channel);
+        ageWrites.push({ ...pending, path: 'traits.ageBand.posterior', key: w.key as AgeBand });
+        break;
+      case 'priceSensitivity': {
+        const prev = priceSensitivity.value;
+        priceSensitivity = observeScalar(priceSensitivity, w.value ?? 0.5, w.weight, clock, w.source);
+        other.push(scalarDelta('traits.priceSensitivity.value', prev, priceSensitivity, w));
+        break;
+      }
+      case 'giftIntent': {
+        const prev = giftIntent.value;
+        giftIntent = observeScalar(giftIntent, w.value ?? 0.5, w.weight, clock, w.source);
+        other.push(scalarDelta('traits.giftIntent.value', prev, giftIntent, w));
+        break;
+      }
+      case 'size': {
+        // Encoded as `Department:Size` because a size means nothing without the
+        // department it was measured in - a shopper is an L in jerseys and an XL
+        // in hoodies, and both are true.
+        const [dept, size] = (w.key ?? '').split(':');
+        if (!dept || !size) break;
+        const existing = sizeProfile[dept as Department];
+        const evidenceCount = existing && existing.size === size ? existing.confidence.evidenceCount + w.weight : w.weight;
+        sizeProfile[dept as Department] = {
+          size,
+          confidence: {
+            value: Math.max(0.02, Math.min(0.99, 1 - Math.exp(-evidenceCount / SUFFICIENCY_K))),
+            evidenceCount,
+            lastUpdated: clock.now,
+            source: w.source,
+            decayLambda: DECAY.size,
+          },
+        };
+        other.push({
+          path: `traits.sizeProfile.${dept}.size`,
+          before: existing?.size ?? null,
+          after: size,
+          eventId: null,
+          contribution: Number(w.weight.toFixed(4)),
+          confidenceAfter: Number(sizeProfile[dept as Department]!.confidence.value.toFixed(4)),
+          kind: 'seed',
+          label: w.label,
+        });
+        break;
+      }
+      case 'region': {
+        const prev = region.value;
+        const evidenceCount = region.confidence.evidenceCount + w.weight;
+        region = {
+          value: w.key ?? null,
+          confidence: {
+            value: Math.max(0.02, Math.min(0.99, 1 - Math.exp(-evidenceCount / SUFFICIENCY_K))),
+            evidenceCount,
+            lastUpdated: clock.now,
+            source: w.source,
+            decayLambda: DECAY.region,
+          },
+        };
+        other.push({
+          path: 'traits.region.value',
+          before: prev,
+          after: region.value,
+          eventId: null,
+          contribution: Number(w.weight.toFixed(4)),
+          confidenceAfter: Number(region.confidence.value.toFixed(4)),
+          kind: 'seed',
+          label: w.label,
+        });
+        break;
+      }
+      case 'orders':
+        lifetimeOrders = Math.max(lifetimeOrders, Math.round(w.weight));
+        other.push({
+          path: 'state.lifetimeOrders',
+          before: profile.state.lifetimeOrders,
+          after: lifetimeOrders,
+          eventId: null,
+          contribution: 0,
+          confidenceAfter: 1,
+          kind: 'seed',
+          label: w.label,
+        });
+        break;
+      case 'loyalty':
+        loyaltyTier = w.key ?? null;
+        other.push({
+          path: 'state.loyaltyTier',
+          before: profile.state.loyaltyTier,
+          after: loyaltyTier,
+          eventId: null,
+          contribution: 0,
+          confidenceAfter: 1,
+          kind: 'seed',
+          label: w.label,
+        });
+        break;
+    }
+  }
+
+  league = recompute(league, LEAGUES, leaguePrior, clock, 'history');
+  team = recompute(team, TEAM_IDS, teamPrior, clock, 'history');
+  player = recompute(player, PLAYER_IDS, playerPrior, clock, 'history');
+  department = recompute(department, DEPARTMENT_IDS, departmentPrior, clock, 'history');
+  gender = recompute(gender, GENDER_TRAITS, (g) => GENDER_PRIOR[g], clock, 'crm');
+  ageBand = recompute(ageBand, AGE_BANDS, (a) => AGE_BAND_PRIOR[a], clock, 'crm');
+
+  const next: VisitorProfile = {
+    ...profile,
+    affinities: { league, team, player, department },
+    traits: { ...profile.traits, gender, ageBand, priceSensitivity, giftIntent, sizeProfile, region },
+    state: { ...profile.state, lifetimeOrders, loyaltyTier },
+    updatedAt: clock.now,
+  };
+  next.persona = scorePersona(personaFeatures(next), clock.now, DECAY.team);
+
+  const deltas: ProfileDelta[] = [
+    ...emitDeltas(teamWrites, before.affinities.team, team),
+    ...emitDeltas(leagueWrites, before.affinities.league, league),
+    ...emitDeltas(playerWrites, before.affinities.player, player),
+    ...emitDeltas(deptWrites, before.affinities.department, department),
+    ...emitDeltas(genderWrites, before.traits.gender, gender),
+    ...emitDeltas(ageWrites, before.traits.ageBand, ageBand),
+    ...other,
+  ];
+
+  return { profile: next, deltas };
+}
+
+function scalarDelta(path: string, before: number, after: ScalarTrait, w: SeedWrite): ProfileDelta {
+  return {
+    path,
+    before: Number(before.toFixed(4)),
+    after: Number(after.value.toFixed(4)),
+    eventId: null,
+    contribution: Number(w.weight.toFixed(4)),
+    confidenceAfter: Number(after.confidence.value.toFixed(4)),
+    kind: 'seed',
+    label: w.label,
+  };
+}
+
+/* ------------------------------------------------------------- promotion -- */
+
+/** Every field the panel can animate, with a reader for its current state. */
+const TRACKED_FIELDS: {
+  path: string;
+  label: string;
+  read: (p: VisitorProfile) => { value: string; confidence: number; source: ProfileSource };
+}[] = [
+  { path: 'affinities.team', label: 'Team affinity', read: (p) => ({ value: p.affinities.team.top, confidence: p.affinities.team.confidence.value, source: p.affinities.team.confidence.source }) },
+  { path: 'affinities.league', label: 'League affinity', read: (p) => ({ value: p.affinities.league.top, confidence: p.affinities.league.confidence.value, source: p.affinities.league.confidence.source }) },
+  { path: 'affinities.player', label: 'Player affinity', read: (p) => ({ value: p.affinities.player.top, confidence: p.affinities.player.confidence.value, source: p.affinities.player.confidence.source }) },
+  { path: 'affinities.department', label: 'Department affinity', read: (p) => ({ value: p.affinities.department.top, confidence: p.affinities.department.confidence.value, source: p.affinities.department.confidence.source }) },
+  { path: 'traits.gender', label: 'Gender', read: (p) => ({ value: p.traits.gender.top, confidence: p.traits.gender.confidence.value, source: p.traits.gender.confidence.source }) },
+  { path: 'traits.ageBand', label: 'Age band', read: (p) => ({ value: p.traits.ageBand.top, confidence: p.traits.ageBand.confidence.value, source: p.traits.ageBand.confidence.source }) },
+  { path: 'traits.priceSensitivity', label: 'Price sensitivity', read: (p) => ({ value: p.traits.priceSensitivity.value.toFixed(2), confidence: p.traits.priceSensitivity.confidence.value, source: p.traits.priceSensitivity.confidence.source }) },
+  { path: 'traits.giftIntent', label: 'Gift intent', read: (p) => ({ value: p.traits.giftIntent.value.toFixed(2), confidence: p.traits.giftIntent.confidence.value, source: p.traits.giftIntent.confidence.source }) },
+  { path: 'traits.region', label: 'Region', read: (p) => ({ value: p.traits.region.value ?? 'unknown', confidence: p.traits.region.confidence.value, source: p.traits.region.confidence.source }) },
+  { path: 'traits.sizeProfile', label: 'Size profile', read: (p) => { const k = Object.keys(p.traits.sizeProfile); return { value: k.length ? k.map((d) => `${d} ${p.traits.sizeProfile[d as Department]!.size}`).join(', ') : 'unknown', confidence: k.length ? 0.9 : 0, source: k.length ? 'history' : 'prior' }; } },
+  { path: 'state.loyaltyTier', label: 'Loyalty tier', read: (p) => ({ value: p.state.loyaltyTier ?? 'none', confidence: p.state.loyaltyTier ? 1 : 0, source: p.state.loyaltyTier ? 'crm' : 'prior' }) },
+  { path: 'persona', label: 'Persona', read: (p) => ({ value: p.persona.label, confidence: p.persona.confidence.value, source: 'inferred' }) },
+];
+
+/**
+ * What changed between two folds, as deltas the panel can animate.
+ *
+ * This is a comparison rather than something emitted during the fold, and that
+ * is not a compromise - it is what the change actually is. Promotion does not
+ * happen *inside* a fold; it is the difference between one fold and another, so
+ * the honest way to describe it is to run both and diff them. The `kind` is
+ * `promotion` precisely so a reader can tell these apart from the observation
+ * deltas, which are emitted inline at the point of the write.
+ *
+ * A field is reported when its source changed, its leading value changed, or its
+ * confidence moved by more than a rounding error - the three things a viewer
+ * would notice on screen.
+ */
+export function diffProfiles(
+  before: VisitorProfile,
+  after: VisitorProfile,
+  cause: string
+): ProfileDelta[] {
+  const deltas: ProfileDelta[] = [];
+
+  for (const field of TRACKED_FIELDS) {
+    const a = field.read(before);
+    const b = field.read(after);
+    const sourceChanged = a.source !== b.source;
+    const valueChanged = a.value !== b.value;
+    const confidenceMoved = Math.abs(a.confidence - b.confidence) > 0.005;
+    if (!sourceChanged && !valueChanged && !confidenceMoved) continue;
+
+    const how = sourceChanged ? `${a.source} -> ${b.source}` : `${b.source}`;
+    deltas.push({
+      path: `${field.path}.top`,
+      before: a.value,
+      after: b.value,
+      eventId: null,
+      contribution: Number((b.confidence - a.confidence).toFixed(4)),
+      confidenceAfter: Number(b.confidence.toFixed(4)),
+      kind: 'promotion',
+      label: `${cause} - ${field.label} now sourced from ${how}`,
+    });
+  }
+
+  return deltas;
+}
+
+/**
+ * Moves a visitor up the identity ladder.
+ *
+ * RE-FOLDS. It does not patch the profile it was handed; it builds a new one
+ * from the prior-only constructor against the richer seed, replaying the same
+ * events. That is the whole design: the new evidence has to compete with the
+ * session's own, not overwrite it. A member whose CRM record says `mens` and
+ * whose last eight clicks were all in Kids ends up with a contested gender
+ * distribution and a visible margin, which is the truth about that shopper.
+ * Patching in place would have produced a confident `mens` and thrown the
+ * session away.
+ *
+ * The returned deltas are the promotion diff, not the re-fold's own seed
+ * deltas - the caller wants to know what visibly changed, not to replay the
+ * construction of a profile it already has.
+ */
+export function promoteProfile(
+  previous: VisitorProfile,
+  scenario: Scenario,
+  events: UserEvent[],
+  seed: IdentitySeed,
+  clock: ProfileClock = { now: previous.updatedAt }
+): ProfileUpdate {
+  const rebuilt = buildProfile(scenario, events, clock, seed).profile;
+  const cause = `Promoted to ${seed.state}`;
+  return { profile: rebuilt, deltas: diffProfiles(previous, rebuilt, cause) };
 }
