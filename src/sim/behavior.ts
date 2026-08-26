@@ -19,6 +19,18 @@
 import { Department, Product, TeamId } from '../types';
 import { Rng } from './rng';
 import {
+  CHOICE_SHAPE,
+  ChoiceModel,
+  abandonProbability,
+  addProbability,
+  examinationProbability,
+  fitLogisticIntercept,
+  fitMonotone,
+  orderProbability,
+  relevanceProbability,
+  utility,
+} from './choice';
+import {
   DEPARTMENTS,
   DEPARTMENT_BY_ID,
   DEPARTMENT_IDS,
@@ -53,12 +65,87 @@ const CO_VIEW_WINDOW = 3;
  */
 const BASKET_CONCENTRATION = 2.2;
 
+/**
+ * How many slots the un-personalised grid offers before the shopper runs out of
+ * page. Sessions almost never reach this - abandonment ends them first - but it
+ * has to be finite, because an infinite grid would let a patient shopper find
+ * anything and there would be no such thing as burying an item.
+ */
+const SURFACE_DEPTH = 48;
+
+/**
+ * Concentration applied to popularity when ordering the grid.
+ *
+ * The un-personalised storefront sorts by sales rank. That would be a hard
+ * deterministic sort; this softens it into a popularity-weighted sample without
+ * replacement, which stands in for the merchandising rotation, inventory churn
+ * and tie-breaking that keep a real grid from being frozen. The hard sort is the
+ * limiting case as this exponent goes to infinity.
+ */
+const SURFACE_CONCENTRATION = 2.2;
+
+/** Off-team items placed in the grid, standing in for cross-sell rails. */
+const STRAY_SLOTS = 24;
+
+/* ------------------------------------------------------- calibration ------ */
+
+/**
+ * The volume the choice model is fitted to reproduce.
+ *
+ * These are the aggregate rates the flat constants this model replaces used to
+ * produce - measured off the previous generator, not chosen. Holding them fixed
+ * is the experimental design: it means any movement in the evaluation metrics
+ * comes from a change in *which* items get clicked and carted, not from the
+ * population generating more or fewer events. A choice model that also moved
+ * the event counts would confound composition with volume and there would be no
+ * way to attribute the difference.
+ */
+const VOLUME_TARGETS = {
+  /** Mean distinct products clicked per session, over all generated sessions. */
+  depth: 6.6157,
+  /** P(add to cart | product clicked). The old rule was 0.2 x mean recency boost. */
+  addRate: 0.14,
+  /** P(session converts | at least one cart add). The old rule was a flat 0.55. */
+  conversion: 0.55,
+};
+
+/** Sessions per calibration pass. Large enough to fit against, small enough to be free. */
+const CALIBRATION_SESSIONS = 800;
+/**
+ * Rounds of alternating click/add fits.
+ *
+ * The two are coupled - a cart add relieves abandonment, so the add rate feeds
+ * back into session depth - so neither can be fitted once in isolation. Two
+ * rounds of coordinate descent is enough: the second round moves the click
+ * intercept by less than a thousandth of a logit.
+ */
+const CALIBRATION_ROUNDS = 2;
+
 export interface SimSession {
   focusTeam: TeamId;
+  /**
+   * The department the shopper came in for.
+   *
+   * Drawn once at session start rather than implied per click. See
+   * `simulateSession` for why the generative story changed.
+   */
+  focusDept: Department;
   /** Product indices viewed, in order. */
   viewed: number[];
   carted: number[];
   ordered: number[];
+  /**
+   * Effort accounting. Not observable to any engine - these are what the effort
+   * ledger is scored against, and a session that found its item in slot two and
+   * one that ground through thirty are only distinguishable here.
+   */
+  slotsWalked: number;
+  /** Slots the shopper actually looked at. The rest were never seen. */
+  examined: number;
+  /** Slots examined and rejected. */
+  scrolledPast: number;
+  /** True if the shopper left rather than running out of grid. */
+  abandoned: boolean;
 }
 
 export interface SyntheticCustomer {
@@ -109,6 +196,8 @@ export interface CoGraphs {
 export interface SimulationResult {
   customers: SyntheticCustomer[];
   graphs: CoGraphs;
+  /** The fitted choice model this world was generated under. */
+  choice: ChoiceModel;
   stats: {
     populationSize: number;
     sessionCount: number;
@@ -116,6 +205,24 @@ export interface SimulationResult {
     viewEventCount: number;
     meanBasketSize: number;
     elapsedMs: number;
+    /**
+     * What the fitted intercepts actually produced over the whole population,
+     * as against what they were fitted to on the calibration sample. Reported
+     * because a calibration that missed should be visible rather than assumed.
+     * Measured over every generated session, held-out ones included, since that
+     * is the population the fit targeted.
+     */
+    realised: {
+      depth: number;
+      addRate: number;
+      conversion: number;
+      /** Mean grid slots walked per session. */
+      slotsWalked: number;
+      /** Mean slots examined and rejected per session. */
+      scrolledPast: number;
+      /** Share of sessions ended by the shopper leaving rather than by running out of grid. */
+      abandonRate: number;
+    };
   };
 }
 
@@ -203,14 +310,27 @@ function drawDeptAffinity(rng: Rng): Record<Department, number> {
   return raw;
 }
 
-/** Relevance of a product to a shopper in a given session, before popularity. */
+/**
+ * Relevance of a product to a shopper in a given session, before popularity.
+ *
+ * This reads the shopper's latent affinities directly, which is the point: it is
+ * the ground truth every ranker in this repo is denied, and the choice model in
+ * choice.ts is a calibrated link function over exactly this quantity. The gap
+ * between what this knows and what an engine can infer is the only thing the
+ * evaluation harness is measuring.
+ *
+ * `focusDept` enters the same way `focusTeam` does, and deliberately so - see
+ * `simulateSession`.
+ */
 function productAffinityScore(
   product: Product,
   customer: SyntheticCustomer,
-  focusTeam: TeamId
+  focusTeam: TeamId,
+  focusDept: Department
 ): number {
   const teamTerm = product.team === focusTeam ? 1.0 : customer.teamAffinity[product.team] * 0.35;
-  const deptTerm = customer.deptAffinity[product.department];
+  const deptTerm =
+    product.department === focusDept ? 1.0 : customer.deptAffinity[product.department] * 0.35;
   const popularityTerm = product.popularity / 100;
 
   // Price sensitivity pushes shoppers toward the cheaper end of the assortment.
@@ -256,12 +376,137 @@ function buildBasket(
   return basket;
 }
 
+/* ------------------------------------------------------------- surfacing -- */
+
+/**
+ * What the un-personalised storefront puts in front of the shopper, in order.
+ *
+ * This is the seam that did not exist before, and its absence is why a paired
+ * A/B over the old simulator would have measured exactly zero. Sessions used to
+ * sample viewed products directly from an affinity-weighted pool, which means
+ * the shopper found what they wanted regardless of what the store showed them.
+ * Ranking could not help and could not hurt.
+ *
+ * Now the store surfaces a list and the shopper walks it. The default policy
+ * knows nothing about the shopper - it sorts by sales rank, softened, which is
+ * what an un-personalised grid does. A personalised arm supplies a different
+ * ordering over the same candidates and the difference in outcome is a real
+ * measurement rather than an artefact.
+ *
+ * Selection is an exponential race - key = -ln(u) / weight, take the smallest -
+ * which is a weighted sample without replacement in one pass, rather than the
+ * repeated weighted picks that would make this quadratic in the assortment.
+ */
+export type SurfacePolicy = (
+  candidates: number[],
+  products: Product[],
+  customer: SyntheticCustomer,
+  focusTeam: TeamId,
+  focusDept: Department
+) => number[];
+
+function surfaceOrganic(rng: Rng, candidates: number[], products: Product[]): number[] {
+  const n = candidates.length;
+  const keys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const weight = Math.pow(products[candidates[i]].popularity, SURFACE_CONCENTRATION);
+    keys[i] = -Math.log(Math.max(1e-12, rng.float())) / Math.max(1e-9, weight);
+  }
+  const order = candidates.map((_, i) => i);
+  order.sort((a, b) => keys[a] - keys[b]);
+  const depth = Math.min(SURFACE_DEPTH, n);
+  const out: number[] = new Array(depth);
+  for (let i = 0; i < depth; i++) out[i] = candidates[order[i]];
+  return out;
+}
+
+/* --------------------------------------------------------------- browse -- */
+
+interface BrowseOutcome {
+  viewed: number[];
+  carted: number[];
+  /** Affinity of each carted item, in the same order. */
+  cartedAffinity: number[];
+  slotsWalked: number;
+  examined: number;
+  scrolledPast: number;
+  abandoned: boolean;
+}
+
+/**
+ * Walks a surfaced list slot by slot under the choice model.
+ *
+ * The three outcomes per slot partition exhaustively - examined and clicked,
+ * examined and rejected, never seen - which is what lets a later effort ledger
+ * tell indifference apart from invisibility. They are different failures and
+ * they have different fixes: one is a relevance problem, the other is a ranking
+ * problem, and a simulator that collapses them cannot support the distinction.
+ */
+function browse(
+  rng: Rng,
+  surfaced: number[],
+  affinities: number[],
+  model: ChoiceModel
+): BrowseOutcome {
+  const viewed: number[] = [];
+  const carted: number[] = [];
+  const cartedAffinity: number[] = [];
+  const state = { slotsWalked: 0, missStreak: 0, clicks: 0, adds: 0 };
+  let examined = 0;
+  let scrolledPast = 0;
+  let abandoned = false;
+
+  for (let pos = 0; pos < surfaced.length; pos++) {
+    state.slotsWalked++;
+    const affinity = affinities[pos];
+
+    if (rng.chance(examinationProbability(pos, model))) {
+      examined++;
+      if (rng.chance(relevanceProbability(affinity, model))) {
+        viewed.push(surfaced[pos]);
+        state.clicks++;
+        state.missStreak = 0;
+        if (rng.chance(addProbability(affinity, model))) {
+          carted.push(surfaced[pos]);
+          cartedAffinity.push(affinity);
+          state.adds++;
+        }
+      } else {
+        scrolledPast++;
+        state.missStreak++;
+      }
+    }
+
+    if (rng.chance(abandonProbability(state, CHOICE_SHAPE))) {
+      abandoned = true;
+      break;
+    }
+  }
+
+  return {
+    viewed,
+    carted,
+    cartedAffinity,
+    slotsWalked: state.slotsWalked,
+    examined,
+    scrolledPast,
+    abandoned,
+  };
+}
+
+/* -------------------------------------------------------------- session -- */
+
+/** Median basket value, used to make the conversion price term unitless. */
+const REFERENCE_BASKET_VALUE = 120;
+
 function simulateSession(
   rng: Rng,
   customer: SyntheticCustomer,
   products: Product[],
   byTeam: Map<TeamId, number[]>,
-  byTeamDept: Map<string, number[]>
+  byTeamDept: Map<string, number[]>,
+  model: ChoiceModel,
+  rank?: SurfacePolicy
 ): SimSession {
   // Which club is front of mind this session: affinity weighted by how in-season
   // that club's league currently is.
@@ -270,48 +515,255 @@ function simulateSession(
     TEAM_IDS.map((t) => customer.teamAffinity[t] * LEAGUE_SEASONALITY[TEAM_BY_ID[t].league][SIM_MONTH])
   );
 
-  // Browse depth: log-normal, most sessions shallow, some long.
-  const depth = Math.max(2, Math.min(18, Math.round(rng.logNormal(Math.log(6), 0.5))));
+  /*
+   * The department the shopper came in for, drawn once, here.
+   *
+   * This replaces a generative story that had no session-level department at
+   * all: every click sampled independently from the shopper's lifetime
+   * department affinity, so a single session could wander from a jersey to a
+   * mug to a pair of socks with nothing tying them together. That is not how
+   * anybody shops. People arrive with a mission - a gift, a birthday, a kit for
+   * the new season - and the mission is a property of the visit rather than of
+   * the click.
+   *
+   * It enters exactly where `focusTeam` does and with the same coefficients,
+   * which is the point: this is the same claim about how a session is
+   * organised, applied to the axis it was previously missing. It is a change to
+   * the story the simulator tells, not a knob turned until a metric improved -
+   * and it moves the department metric in a direction that has to be published
+   * either way.
+   */
+  const focusDept = rng.pickWeighted(
+    DEPARTMENT_IDS,
+    DEPARTMENT_IDS.map((d) => customer.deptAffinity[d])
+  );
 
-  // Candidate pool: the focus team's assortment, plus a slice of the rest of the
+  // Candidate set: the focus team's assortment, plus a slice of the rest of the
   // catalog so cross-team co-views exist at a realistic low rate.
   const focusPool = byTeam.get(focusTeam) ?? [];
   // Sampled directly rather than by shuffling the whole catalog - this runs once
   // per simulated session and the allocation churn is otherwise significant.
-  const strayPool: number[] = [];
-  for (let i = 0; i < 40; i++) strayPool.push(rng.int(0, products.length - 1));
-  const pool = focusPool.concat(strayPool);
-  if (pool.length === 0) return { focusTeam, viewed: [], carted: [], ordered: [] };
+  const candidates = focusPool.slice();
+  for (let i = 0; i < STRAY_SLOTS; i++) candidates.push(rng.int(0, products.length - 1));
+  const empty: SimSession = {
+    focusTeam,
+    focusDept,
+    viewed: [],
+    carted: [],
+    ordered: [],
+    slotsWalked: 0,
+    examined: 0,
+    scrolledPast: 0,
+    abandoned: false,
+  };
+  if (candidates.length === 0) return empty;
 
-  const weights = pool.map((i) => productAffinityScore(products[i], customer, focusTeam));
+  const surfaced = rank
+    ? rank(candidates, products, customer, focusTeam, focusDept).slice(0, SURFACE_DEPTH)
+    : surfaceOrganic(rng, candidates, products);
 
-  const viewed: number[] = [];
-  for (let i = 0; i < depth; i++) {
-    const pick = rng.pickWeighted(pool, weights);
-    if (!viewed.includes(pick)) viewed.push(pick);
-  }
+  const affinities = surfaced.map((i) => productAffinityScore(products[i], customer, focusTeam, focusDept));
+  const outcome = browse(rng, surfaced, affinities, model);
 
-  // Cart adds: a subset of what was viewed, biased toward later views.
-  const carted: number[] = [];
-  viewed.forEach((idx, position) => {
-    const recencyBoost = 0.4 + (position / Math.max(1, viewed.length - 1)) * 0.6;
-    if (rng.chance(0.2 * recencyBoost)) carted.push(idx);
-  });
-
-  // Conversion: carted sessions convert at a realistic rate.
+  // Conversion now reads the cart rather than a coin. A cart full of things the
+  // shopper wanted converts better than a cart full of things they did not,
+  // which is the whole mechanism by which better recommending can move revenue.
   let ordered: number[] = [];
-  if (carted.length > 0 && rng.chance(0.55)) {
-    const anchorIdx = rng.pick(carted);
-    ordered = buildBasket(rng, anchorIdx, products, byTeamDept, customer);
+  if (outcome.carted.length > 0) {
+    let affinitySum = 0;
+    let value = 0;
+    for (let i = 0; i < outcome.carted.length; i++) {
+      affinitySum += outcome.cartedAffinity[i];
+      const p = products[outcome.carted[i]];
+      value += p.salePrice ?? p.price;
+    }
+    const meanAffinity = affinitySum / outcome.carted.length;
+
+    if (
+      rng.chance(
+        orderProbability(
+          {
+            meanAffinity,
+            relativeValue: value / REFERENCE_BASKET_VALUE,
+            priceSensitivity: customer.priceSensitivity,
+          },
+          model
+        )
+      )
+    ) {
+      // The anchor is the item the shopper actually came for, so it is drawn by
+      // affinity rather than uniformly. Weighted rather than argmax: a cart is
+      // not always anchored on its single best item.
+      const anchorIdx = rng.pickWeighted(outcome.carted, outcome.cartedAffinity);
+      ordered = buildBasket(rng, anchorIdx, products, byTeamDept, customer);
+    }
   }
 
-  return { focusTeam, viewed, carted, ordered };
+  return {
+    focusTeam,
+    focusDept,
+    viewed: outcome.viewed,
+    carted: outcome.carted,
+    ordered,
+    slotsWalked: outcome.slotsWalked,
+    examined: outcome.examined,
+    scrolledPast: outcome.scrolledPast,
+    abandoned: outcome.abandoned,
+  };
+}
+
+/* ---------------------------------------------------------- calibration -- */
+
+/** A shopper drawn only to fit the choice model against; never enters the population. */
+function drawCustomer(rng: Rng, id: string): SyntheticCustomer {
+  const { affinity, loyalty } = drawTeamAffinity(rng);
+  return {
+    id,
+    teamAffinity: affinity,
+    deptAffinity: drawDeptAffinity(rng),
+    priceSensitivity: Math.min(1, Math.max(0, rng.gaussian(0.45, 0.22))),
+    loyalty,
+    sessions: [],
+    heldOut: null,
+  };
+}
+
+/**
+ * Fits the three intercepts against the volume targets.
+ *
+ * Runs on its own RNG stream, re-seeded identically for every evaluation, for
+ * two reasons. The main population stream is untouched, so calibrating does not
+ * shift the world it is calibrating for. And each evaluation is a deterministic
+ * function of the intercept, which is what makes bisection exact - on a noisy
+ * objective it would wander and the dataset would stop being reproducible.
+ *
+ * The fitted values are reported with what they achieved on the calibration
+ * sample, and `simulateBehavior` separately reports what they realised over the
+ * full population. Those are not the same number and the gap is the fit's
+ * sampling error, which is worth being able to see.
+ */
+function calibrateChoiceModel(
+  products: Product[],
+  byTeam: Map<TeamId, number[]>,
+  byTeamDept: Map<string, number[]>,
+  seed: string
+): ChoiceModel {
+  const model: ChoiceModel = {
+    ...CHOICE_SHAPE,
+    clickIntercept: 0,
+    addIntercept: 0,
+    orderIntercept: 0,
+    calibration: {
+      depth: { target: VOLUME_TARGETS.depth, achieved: 0, iterations: 0 },
+      addRate: { target: VOLUME_TARGETS.addRate, achieved: 0, iterations: 0 },
+      conversion: { target: VOLUME_TARGETS.conversion, achieved: 0, iterations: 0 },
+    },
+  };
+
+  /** One deterministic calibration pass. Same seed every time, by design. */
+  const pass = (): SimSession[] => {
+    const rng = new Rng(`${seed}:calibration`);
+    const out: SimSession[] = [];
+    for (let i = 0; i < CALIBRATION_SESSIONS; i++) {
+      const customer = drawCustomer(rng, `calib-${i}`);
+      out.push(simulateSession(rng, customer, products, byTeam, byTeamDept, model));
+    }
+    return out;
+  };
+
+  // Click and add are coupled through abandonment relief, so they alternate.
+  for (let round = 0; round < CALIBRATION_ROUNDS; round++) {
+    const depthFit = fitMonotone(
+      (intercept) => {
+        model.clickIntercept = intercept;
+        const sessions = pass();
+        let views = 0;
+        for (const s of sessions) views += s.viewed.length;
+        return views / Math.max(1, sessions.length);
+      },
+      VOLUME_TARGETS.depth,
+      -25,
+      25,
+      { maxIterations: 22 }
+    );
+    model.clickIntercept = depthFit.value;
+    model.calibration.depth = {
+      target: VOLUME_TARGETS.depth,
+      achieved: depthFit.achieved,
+      iterations: depthFit.iterations,
+    };
+
+    // The add rate is a closed-form fit over the affinities that were actually
+    // clicked, which is why it needs the click intercept settled first.
+    const clicked: number[] = [];
+    {
+      const rng = new Rng(`${seed}:calibration`);
+      for (let i = 0; i < CALIBRATION_SESSIONS; i++) {
+        const customer = drawCustomer(rng, `calib-${i}`);
+        const session = simulateSession(rng, customer, products, byTeam, byTeamDept, model);
+        for (const idx of session.viewed) {
+          clicked.push(
+            utility(productAffinityScore(products[idx], customer, session.focusTeam, session.focusDept))
+          );
+        }
+      }
+    }
+    const addFit = fitLogisticIntercept(clicked, model.addSlope, VOLUME_TARGETS.addRate);
+    model.addIntercept = addFit.value;
+    model.calibration.addRate = {
+      target: VOLUME_TARGETS.addRate,
+      achieved: addFit.achieved,
+      iterations: addFit.iterations,
+    };
+  }
+
+  // Conversion is downstream of both and feeds back into neither, so it is
+  // fitted once, last, over the carts the settled model actually produces.
+  const cartUtilities: number[] = [];
+  const cartPriceOffsets: number[] = [];
+  {
+    const rng = new Rng(`${seed}:calibration`);
+    for (let i = 0; i < CALIBRATION_SESSIONS; i++) {
+      const customer = drawCustomer(rng, `calib-${i}`);
+      const session = simulateSession(rng, customer, products, byTeam, byTeamDept, model);
+      if (session.carted.length === 0) continue;
+      let affinitySum = 0;
+      let value = 0;
+      for (const idx of session.carted) {
+        affinitySum += productAffinityScore(products[idx], customer, session.focusTeam, session.focusDept);
+        const p = products[idx];
+        value += p.salePrice ?? p.price;
+      }
+      cartUtilities.push(utility(affinitySum / session.carted.length));
+      cartPriceOffsets.push(
+        model.orderPricePenalty * customer.priceSensitivity * (value / REFERENCE_BASKET_VALUE)
+      );
+    }
+  }
+  const orderFit = fitLogisticIntercept(
+    cartUtilities,
+    model.orderAffinitySlope,
+    VOLUME_TARGETS.conversion,
+    cartPriceOffsets
+  );
+  model.orderIntercept = orderFit.value;
+  model.calibration.conversion = {
+    target: VOLUME_TARGETS.conversion,
+    achieved: orderFit.achieved,
+    iterations: orderFit.iterations,
+  };
+
+  return model;
 }
 
 export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SEED): SimulationResult {
   const startedAt = performance.now();
   const rng = new Rng(seed);
   const { byTeam, byTeamDept } = buildBuckets(products);
+
+  // Fitted before a single population shopper is drawn, on its own RNG stream,
+  // so calibrating the model does not perturb the world it is calibrated for.
+  const choice = calibrateChoiceModel(products, byTeam, byTeamDept, seed);
 
   const graphs: CoGraphs = {
     coView: new Map(),
@@ -327,6 +779,19 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
   const customers: SyntheticCustomer[] = [];
   let viewEventCount = 0;
   let basketSizeTotal = 0;
+
+  // Realised volumes, accumulated over every generated session including the
+  // held-out ones - the calibration targeted the generative process, so it has
+  // to be checked against the generative process rather than against the
+  // observable subset, which is depleted of orders by construction.
+  let allSessions_ = 0;
+  let allViews = 0;
+  let allCarts = 0;
+  let allSessionsWithCart = 0;
+  let allConverted = 0;
+  let allSlotsWalked = 0;
+  let allScrolledPast = 0;
+  let allAbandoned = 0;
 
   for (let c = 0; c < POPULATION_SIZE; c++) {
     const { affinity, loyalty } = drawTeamAffinity(rng);
@@ -344,7 +809,20 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
     const sessionCount = Math.max(2, Math.min(7, Math.round(rng.logNormal(Math.log(3.2), 0.45))));
     const allSessions: SimSession[] = [];
     for (let s = 0; s < sessionCount; s++) {
-      allSessions.push(simulateSession(rng, customer, products, byTeam, byTeamDept));
+      allSessions.push(simulateSession(rng, customer, products, byTeam, byTeamDept, choice));
+    }
+
+    for (const session of allSessions) {
+      allSessions_++;
+      allViews += session.viewed.length;
+      allCarts += session.carted.length;
+      allSlotsWalked += session.slotsWalked;
+      allScrolledPast += session.scrolledPast;
+      if (session.abandoned) allAbandoned++;
+      if (session.carted.length > 0) {
+        allSessionsWithCart++;
+        if (session.ordered.length > 0) allConverted++;
+      }
     }
 
     // Hold out the last session that actually resulted in a purchase, so the
@@ -411,9 +889,12 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
     customers.push(customer);
   }
 
+  const perSession = (v: number) => Number((v / Math.max(1, allSessions_)).toFixed(4));
+
   return {
     customers,
     graphs,
+    choice,
     stats: {
       populationSize: customers.length,
       sessionCount: graphs.totalSessions,
@@ -421,6 +902,14 @@ export function simulateBehavior(products: Product[], seed: string = BEHAVIOR_SE
       viewEventCount,
       meanBasketSize: graphs.totalOrders > 0 ? basketSizeTotal / graphs.totalOrders : 0,
       elapsedMs: Math.round(performance.now() - startedAt),
+      realised: {
+        depth: perSession(allViews),
+        addRate: Number((allCarts / Math.max(1, allViews)).toFixed(4)),
+        conversion: Number((allConverted / Math.max(1, allSessionsWithCart)).toFixed(4)),
+        slotsWalked: perSession(allSlotsWalked),
+        scrolledPast: perSession(allScrolledPast),
+        abandonRate: Number((allAbandoned / Math.max(1, allSessions_)).toFixed(4)),
+      },
     },
   };
 }
