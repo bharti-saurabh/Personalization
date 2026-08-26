@@ -12,7 +12,8 @@
     "sim:inspect": "tsx scripts/inspect-dataset.ts",
     "sim:eval": "tsx scripts/evaluate.ts",
     "sim:imagery": "tsx scripts/render-imagery.tsx",
-    "build:single": "node scripts/build-singlefile.mjs"
+    "build:single": "node scripts/build-singlefile.mjs",
+    "test": "tsx --test src/ml/profile.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

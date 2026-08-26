@@ -23,13 +23,35 @@ import {
   TeamId,
   UserEvent,
 } from '../types';
-import { CONFIDENCE_THRESHOLD, IntentResult, predictIntent } from './intent';
+import { CONFIDENCE_THRESHOLD, IntentResult, predictIntent, predictIntentFromProfile } from './intent';
+import { applyEvent, buildProfile, createProfile } from './profile';
+import type { ProfileClock, ProfileUpdate, VisitorProfile } from './profile';
 import { ComplementOptions, ComplementResult, retrieveComplements } from './complement';
 import { SimilarityOptions, SimilarityResult, retrieveSimilar } from './similarity';
 import { getModels } from './models';
 
 export { CONFIDENCE_THRESHOLD } from './intent';
 export type { IntentResult, IntentTrace } from './intent';
+// The profile's vocabulary is re-exported here for the same reason the engines
+// are: React should import from one place. Adding a second ml/ module to every
+// component's import list is how a façade stops being one.
+export type {
+  AgeBand,
+  Confidence,
+  Dist,
+  DistDriver,
+  GenderTrait,
+  IdentityState,
+  PlayerId,
+  ProfileClock,
+  ProfileDelta,
+  ProfileSource,
+  ProfileUpdate,
+  ScalarTrait,
+  SizeEstimate,
+  VisitorProfile,
+} from './profile';
+export type { PersonaBlock, PersonaId } from './persona';
 export type { SimilarityResult } from './similarity';
 export type { ComplementResult, BackoffLevel } from './complement';
 
@@ -40,6 +62,53 @@ export function runIntentEngine(
   activeTeamOverride?: TeamId | null
 ): IntentResult {
   return predictIntent(scenario, userEvents, activeTeamOverride);
+}
+
+/**
+ * Customer intent, read from a folded profile instead of a raw event stream.
+ *
+ * Same output type as `runIntentEngine`, so a caller can switch paths without
+ * touching anything downstream. Both are exported while the transition runs.
+ */
+export function runIntentEngineFromProfile(
+  profile: VisitorProfile,
+  activeTeamOverride?: TeamId | null
+): IntentResult {
+  return predictIntentFromProfile(profile, activeTeamOverride);
+}
+
+/* ------------------------------------------------------ profile derivation -- */
+
+/**
+ * Folds one event into a profile and reports what moved.
+ *
+ * Pure, like everything in ml/: it returns the next profile rather than storing
+ * it. Persistence is `context/profileStore.ts`'s job and nowhere else's.
+ */
+export function runProfileUpdate(
+  profile: VisitorProfile,
+  event: UserEvent,
+  clock?: ProfileClock
+): ProfileUpdate {
+  return applyEvent(profile, event, clock);
+}
+
+/** Folds a whole history from the prior-only constructor. Events newest-first. */
+export function runProfileBuild(
+  scenario: Scenario,
+  userEvents: UserEvent[],
+  clock?: ProfileClock
+): ProfileUpdate {
+  return buildProfile(scenario, userEvents, clock);
+}
+
+/** A prior-only profile: what an anonymous first-time visitor is. */
+export function runProfileCreate(
+  visitorId: string,
+  identityState?: Parameters<typeof createProfile>[1],
+  clock?: ProfileClock
+): VisitorProfile {
+  return createProfile(visitorId, identityState, clock);
 }
 
 /** Substitutes for an anchor product. */
