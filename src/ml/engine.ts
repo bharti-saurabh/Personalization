@@ -24,8 +24,9 @@ import {
   UserEvent,
 } from '../types';
 import { CONFIDENCE_THRESHOLD, IntentResult, predictIntent, predictIntentFromProfile } from './intent';
-import { applyEvent, buildProfile, createProfile } from './profile';
+import { applyEvent, buildProfile, createProfile, promoteProfile } from './profile';
 import type { ProfileClock, ProfileUpdate, VisitorProfile } from './profile';
+import type { IdentitySeed } from './identity';
 import { ComplementOptions, ComplementResult, retrieveComplements } from './complement';
 import { SimilarityOptions, SimilarityResult, retrieveSimilar } from './similarity';
 import { getModels } from './models';
@@ -52,6 +53,26 @@ export type {
   VisitorProfile,
 } from './profile';
 export type { PersonaBlock, PersonaId } from './persona';
+// The identity ladder, same façade rule.
+export {
+  IDENTITY_LADDER,
+  IDENTITY_RUNGS,
+  demoSeedFor,
+  emptyContext,
+  hasReached,
+  profileCompleteness,
+  readContext,
+  rungIndex,
+} from './identity';
+export type {
+  CompletenessField,
+  CompletenessReport,
+  ContextReading,
+  DeviceClass,
+  IdentityRungMeta,
+  IdentitySeed,
+  VisitorContext,
+} from './identity';
 export type { SimilarityResult } from './similarity';
 export type { ComplementResult, BackoffLevel } from './complement';
 
@@ -97,9 +118,26 @@ export function runProfileUpdate(
 export function runProfileBuild(
   scenario: Scenario,
   userEvents: UserEvent[],
+  clock?: ProfileClock,
+  seed?: IdentitySeed
+): ProfileUpdate {
+  return buildProfile(scenario, userEvents, clock, seed);
+}
+
+/**
+ * Moves a visitor up the identity ladder mid-session.
+ *
+ * Re-folds against the richer seed rather than patching in place, and returns
+ * only the fields that actually changed - which is what the panel animates.
+ */
+export function runProfilePromotion(
+  previous: VisitorProfile,
+  scenario: Scenario,
+  userEvents: UserEvent[],
+  seed: IdentitySeed,
   clock?: ProfileClock
 ): ProfileUpdate {
-  return buildProfile(scenario, userEvents, clock);
+  return promoteProfile(previous, scenario, userEvents, seed, clock);
 }
 
 /** A prior-only profile: what an anonymous first-time visitor is. */

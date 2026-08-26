@@ -15,6 +15,7 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { ScenarioId, StorefrontPage } from '../../types';
+import { IdentityLadder } from './IdentityLadder';
 import { User, ShieldAlert, Sparkles, Flame, HelpCircle, House, LayoutGrid, Package, ShoppingCart } from 'lucide-react';
 
 const SCENARIO_ICON: Record<ScenarioId, React.ReactNode> = {
@@ -72,6 +73,11 @@ export const DemoStrip: React.FC = () => {
           })}
         </div>
       </div>
+
+      {/* HOW MUCH WE KNOW. Between the shopper and the page because it changes
+          what every page below it renders, and because promoting mid-journey is
+          the thing worth watching. */}
+      <IdentityLadder />
 
       {/* WHERE. Steps completed so far are filled, which turns the row into a
           progress indicator rather than four equally-weighted buttons. The

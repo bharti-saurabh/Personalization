@@ -22,7 +22,18 @@ import {
   runSimilarityEngine,
   runComplementEngine,
   generateDecisionTrace,
+  readContext,
 } from '../ml/engine';
+import type {
+  CompletenessReport,
+  ContextReading,
+  IdentityState,
+  ProfileDelta,
+  VisitorContext,
+  VisitorProfile,
+} from '../ml/engine';
+import { useProfileStore } from './profileStore';
+import { SIMULATED_ARRIVAL, contextIsBare, readVisitorContext } from './visitorContext';
 
 interface AppContextType {
   // Scenario & Settings State
@@ -74,6 +85,24 @@ interface AppContextType {
   journal: JournalBeat[];
   activeExplainedProduct: Product | null;
   setActiveExplainedProduct: (p: Product | null) => void;
+
+  /* ------------------------------------------------- identity and profile -- */
+
+  /** The folded visitor profile. Persisted across reloads by profileStore. */
+  visitorProfile: VisitorProfile;
+  /** Weighted completeness of that profile, for the always-on meter. */
+  completeness: CompletenessReport;
+  /** Which rung of the identity ladder the shopper is on. */
+  identityState: IdentityState;
+  /** Moves them to another rung mid-session. Re-folds; never patches. */
+  promoteTo: (state: IdentityState) => void;
+  /** What the last promotion changed, so the panel can animate it. */
+  promotionDeltas: ProfileDelta[];
+  /** What was read off the arriving request before the shopper did anything. */
+  visitorContext: VisitorContext;
+  contextReading: ContextReading;
+  /** True when the arrival context is invented rather than read from the browser. */
+  contextIsSimulated: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -96,6 +125,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedScenario, setSelectedScenario] = useState<Scenario>(() => buildScenarios()[0]);
   const [isPersonalizationOn, setIsPersonalizationOn] = useState<boolean>(true);
   const [showMLPanel, setShowMLPanel] = useState<boolean>(true);
+
+  /**
+   * The arriving context, read once.
+   *
+   * A presenter's laptop usually has an unmapped timezone, no referrer and no
+   * campaign, and the honest reading of that is silence - which makes a poor
+   * demonstration of a rung whose whole subject is what context can tell you.
+   * When the real context carries nothing actionable we fall back to a worked
+   * arrival and say so; `contextIsSimulated` is what the UI labels.
+   */
+  const [visitorContext] = useState<VisitorContext>(() => {
+    const real = readVisitorContext();
+    return contextIsBare(real) ? { ...SIMULATED_ARRIVAL, timezone: real.timezone ?? SIMULATED_ARRIVAL.timezone } : real;
+  });
+  const contextIsSimulated = React.useMemo(() => contextIsBare(readVisitorContext()), []);
+  const contextReading = React.useMemo(() => readContext(visitorContext), [visitorContext]);
 
   const [navigationTab, setNavigationTab] = useState<NavigationTab>('experience');
   const [storefrontPage, setStorefrontPage] = useState<StorefrontPage>('home');
@@ -167,6 +212,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  /**
+   * The profile fold, reached through a ref.
+   *
+   * `recordEvent` is declared above the store that consumes it - moving either
+   * one would mean reordering a lot of interdependent state - so the fold is
+   * called through a ref that the store fills in on the same render. The ref is
+   * only ever read inside an event handler, long after it is set.
+   */
+  const foldEventRef = useRef<((event: UserEvent) => void) | null>(null);
+
   // Record real-time telemetry events
   const recordEvent = (action: string, details?: Partial<UserEvent>) => {
     const newEv: UserEvent = {
@@ -177,6 +232,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...details,
     };
     setUserEvents((prev) => [newEv, ...prev]);
+    // Same event, folded into the persisted profile. The two paths are
+    // deliberately fed from one place so they can never disagree about what the
+    // shopper did.
+    foldEventRef.current?.(newEv);
 
     // Model Feedback Toast Trigger
     setLastModelFeedback(`Recommendation interaction captured: "${action}"`);
@@ -234,6 +293,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     () => runIntentEngine(selectedScenario, userEvents, activeTeamOverride),
     [selectedScenario, userEvents, activeTeamOverride]
   );
+
+  /**
+   * The persisted profile.
+   *
+   * Mounted alongside the event-stream intent path rather than replacing it.
+   * Switching what the storefront's recommendations are computed from is a
+   * behaviour change to every surface at once and belongs in its own commit;
+   * this one adds the profile, the ladder and the meter without moving the
+   * ground under the merchandising.
+   *
+   * It opens at `contextual`, not `anonymous`, because the demo has to open
+   * with the model already having said something - the regional prior, the
+   * campaign intent and the device skew are all available before a single
+   * click.
+   */
+  const profileStore = useProfileStore(
+    selectedScenario,
+    selectedScenario.recentEvents,
+    activeTeamOverride,
+    visitorContext,
+    'contextual'
+  );
+
+  foldEventRef.current = profileStore.recordEvent;
 
   const similarityMatches = React.useMemo(
     () => runSimilarityEngine(selectedProduct, products, 4),
@@ -398,6 +481,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         journal,
         activeExplainedProduct,
         setActiveExplainedProduct,
+        visitorProfile: profileStore.profile,
+        completeness: profileStore.completeness,
+        identityState: profileStore.identityState,
+        promoteTo: profileStore.promoteTo,
+        promotionDeltas: profileStore.promotionDeltas,
+        visitorContext,
+        contextReading,
+        contextIsSimulated,
       }}
     >
       {children}

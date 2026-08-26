@@ -16,6 +16,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { StraiveLogo } from '../brand/StraiveLogo';
 import { Sparkles, PanelRightOpen, PanelRightClose, FlaskConical } from 'lucide-react';
+import { CompletenessMeter } from '../intelligence/CompletenessMeter';
 
 export const AppBar: React.FC = () => {
   const { isPersonalizationOn, togglePersonalization, showMLPanel, toggleMLPanel } = useApp();
@@ -41,6 +42,10 @@ export const AppBar: React.FC = () => {
             <FlaskConical className="h-3 w-3" />
             Synthetic data · simulated models
           </span>
+
+          {/* Always on screen, on every tab. The number's job is to move while
+              you watch it. */}
+          <CompletenessMeter />
 
           <button
             onClick={togglePersonalization}
