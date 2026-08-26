@@ -24,6 +24,7 @@ import {
   TestTube2,
   FlaskConical,
   Workflow,
+  GitBranch,
   Sparkles,
   Columns2,
   Store,
@@ -74,6 +75,16 @@ const GROUPS: { title: string; items: DeepDive[] }[] = [
         blurb: 'Held-out evaluation, popularity baselines and caveats',
         icon: <FlaskConical className="h-4 w-4" />,
         badge: 'Offline',
+      },
+      {
+        // Moved here from the side panel when the panel went to three tabs. It
+        // is a walkthrough of one inference rather than a live reading, so it
+        // belongs with the explanatory screens, not with the ones that move.
+        id: 'pipeline',
+        label: 'Inference Pipeline',
+        blurb: 'One prediction, walked end to end through all seven stages',
+        icon: <GitBranch className="h-4 w-4" />,
+        badge: 'Trace',
       },
       {
         id: 'lab',

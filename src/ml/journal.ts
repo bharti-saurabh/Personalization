@@ -69,6 +69,14 @@ export interface SurfaceChange {
 
 export interface JournalBeat {
   id: string;
+  /**
+   * The event that caused this beat, when there was one.
+   *
+   * Carried so the decision stream can join a beat to the field writes the same
+   * event produced. The beat id is a sequence number and cannot do that job -
+   * two records of the same moment need a shared key, not two private ones.
+   */
+  eventId: string | null;
   seq: number;
   kind: 'session' | 'action' | 'setting';
   at: string;
@@ -436,6 +444,7 @@ export function buildBeat(i: BeatInput): JournalBeat {
 
   return {
     id: `beat-${i.seq}`,
+    eventId: event?.id ?? null,
     seq: i.seq,
     kind: i.kind,
     at: event?.timestamp ?? 'Just now',

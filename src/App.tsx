@@ -22,6 +22,9 @@ const ModelIntelligence = lazy(() =>
 const ModelEvidence = lazy(() =>
   import('./components/intelligence/ModelEvidence').then((m) => ({ default: m.ModelEvidence }))
 );
+const PipelineTrace = lazy(() =>
+  import('./components/intelligence/PipelineTrace').then((m) => ({ default: m.PipelineTrace }))
+);
 const RecommendationLab = lazy(() =>
   import('./components/intelligence/RecommendationLab').then((m) => ({ default: m.RecommendationLab }))
 );
@@ -80,6 +83,7 @@ function DeepDiveStage() {
           {navigationTab === 'comparison' && <PersonalizationComparison />}
           {navigationTab === 'model_intelligence' && <ModelIntelligence />}
           {navigationTab === 'model_evidence' && <ModelEvidence />}
+          {navigationTab === 'pipeline' && <PipelineTrace />}
           {navigationTab === 'lab' && <RecommendationLab />}
           {navigationTab === 'architecture' && <ModelArchitecture />}
           {navigationTab === 'straive_contribution' && <StraiveContribution />}

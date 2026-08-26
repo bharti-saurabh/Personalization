@@ -142,6 +142,7 @@ export type NavigationTab =
   | 'journey'
   | 'model_intelligence'
   | 'model_evidence'
+  | 'pipeline'
   | 'lab'
   | 'architecture'
   | 'straive_contribution';

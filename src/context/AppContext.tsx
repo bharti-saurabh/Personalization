@@ -15,6 +15,10 @@ import { IntentResult } from '../ml/intent';
 import { SimilarityResult } from '../ml/similarity';
 import { ComplementResult } from '../ml/complement';
 import { JournalBeat, buildBeat } from '../ml/journal';
+import { buildDecisions } from '../ml/decisions';
+import type { DecisionEntry } from '../ml/decisions';
+import { emptyLedger } from '../ml/effort';
+import type { EffortLedger } from '../ml/effort';
 import { buildScenarios, findAnchorProduct } from '../data/scenarios';
 import { getDataset, subscribeToWorld } from '../sim/dataset';
 import {
@@ -103,6 +107,22 @@ interface AppContextType {
   contextReading: ContextReading;
   /** True when the arrival context is invented rather than read from the browser. */
   contextIsSimulated: boolean;
+
+  /** Every field write since the profile was created, newest first. */
+  deltaLog: ProfileDelta[];
+  /** Writes from the most recent fold only. What the Profile tab highlights. */
+  lastDeltas: ProfileDelta[];
+  /**
+   * Journal beats joined to the writes they caused - what ran, what moved, what
+   * got rendered, in one record per action.
+   */
+  decisions: DecisionEntry[];
+  /**
+   * What the session cost the shopper. Empty until the storefront's surfaces are
+   * instrumented; the arithmetic and the wiring are real, the entries are not
+   * invented. See ml/effort.ts.
+   */
+  effortLedger: EffortLedger;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -318,6 +338,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   foldEventRef.current = profileStore.recordEvent;
 
+  /**
+   * The two records joined. Memoised on all three inputs because the join walks
+   * the whole delta log once per beat, and the panel re-renders on every hover.
+   */
+  const decisions = React.useMemo(
+    () => buildDecisions(journal, profileStore.deltaLog, profileStore.profile),
+    [journal, profileStore.deltaLog, profileStore.profile]
+  );
+
+  /**
+   * Empty, and honestly so. Populating this means instrumenting searches,
+   * filter flips, pagination and backtracks on the storefront itself, which is
+   * its own piece of work. A ledger filled with plausible invented numbers
+   * would read as evidence and would not be.
+   */
+  const effortLedger = React.useMemo<EffortLedger>(() => emptyLedger(), []);
+
   const similarityMatches = React.useMemo(
     () => runSimilarityEngine(selectedProduct, products, 4),
     [selectedProduct, products]
@@ -489,6 +526,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         visitorContext,
         contextReading,
         contextIsSimulated,
+        deltaLog: profileStore.deltaLog,
+        lastDeltas: profileStore.lastDeltas,
+        decisions,
+        effortLedger,
       }}
     >
       {children}
