@@ -22,7 +22,8 @@ import { useApp } from '../../context/AppContext';
 import { fieldLabel } from '../../ml/decisions';
 import type { DecisionEntry, FeatureRow } from '../../ml/decisions';
 import type { ProfileDelta } from '../../ml/engine';
-import { ChevronDown, ChevronRight, Cpu, Globe2, Layers, PenLine, Check, X as XIcon } from 'lucide-react';
+import { ChevronDown, ChevronRight, Cpu, Globe2, Layers, PenLine, Check, X as XIcon, ArrowUp, ListOrdered } from 'lucide-react';
+import type { RankingExplanation } from '../../ml/ranking';
 
 /* ------------------------------------------------------------------ atoms -- */
 
@@ -340,10 +341,168 @@ const DecisionCard: React.FC<{ entry: DecisionEntry; defaultOpen: boolean }> = (
   );
 };
 
+
+/* ------------------------------------------------------- recommended sort -- */
+
+/**
+ * The default sort, explained where it is being made.
+ *
+ * This card is pinned above the stream rather than folded into it, because the
+ * Recommended order is not an event - it is the standing state of the page, and
+ * it is re-decided on every render whether or not the shopper does anything. A
+ * stream entry would either fire constantly or lie about when it last ran.
+ *
+ * Three things are on it, in the order that makes the argument:
+ *
+ *   THE SCORER   the actual expression, with its weights. Not a description of
+ *                it. Anyone reading this can multiply the numbers themselves.
+ *   THE DRIVERS  per product, what each term contributed. The multiplier is the
+ *                sum of its own drivers by construction, so the breakdown adds
+ *                up rather than being a plausible-looking attribution.
+ *   THE MOVEMENT what would have been on screen instead. Both orderings were
+ *                computed in the same pass from the same pool, which is what
+ *                makes these positions a measurement rather than a claim.
+ *
+ * When the gate is not cleared, or the switch is off, the card says the order is
+ * plain popularity and shows no movement - because there is none.
+ */
+const RankingCard: React.FC<{ explanation: RankingExplanation }> = ({ explanation }) => {
+  const [open, setOpen] = useState(false);
+  const e = explanation;
+
+  return (
+    <div className="rounded-xl border border-straive-200 bg-straive-50/60 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-2.5 py-2 flex items-start gap-2 text-left hover:bg-straive-50 transition-colors"
+      >
+        <ListOrdered className="h-3.5 w-3.5 text-straive-600 shrink-0 mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-straive-700">
+            Standing decision · {e.surface}
+          </div>
+          <p className="text-[11.5px] font-bold text-slate-900 leading-snug mt-0.5">
+            {e.active
+              ? `"Recommended" is a model output, not a merchandised shelf`
+              : `"Recommended" is plain popularity right now`}
+          </p>
+          <p className="text-[10px] text-slate-600 leading-snug mt-0.5">
+            {e.active
+              ? `Popularity reweighted by the team and department posteriors across ${e.considered} products; ${e.moved.length} of the visible top ${e.items.length} are not where popularity alone would have put them.`
+              : `Personalization is off, so every product is ordered by sales rank - the control arm of the comparison.`}
+          </p>
+        </div>
+        <ChevronDown
+          className={`h-3.5 w-3.5 text-straive-600 shrink-0 mt-0.5 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div className="border-t border-straive-200 bg-white px-2.5 py-2 space-y-2.5">
+          <div>
+            <div className="text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+              Scorer
+            </div>
+            <div className="mt-0.5 font-mono text-[10px] text-slate-700 break-words">{e.formula}</div>
+            <div className="mt-1 space-y-0.5">
+              {e.weights.map((w) => (
+                <div key={w.label} className="text-[10px] leading-snug">
+                  <span className="font-mono font-bold tabular-nums text-slate-900">{w.weight.toFixed(1)}</span>{' '}
+                  <span className="font-semibold text-slate-700">{w.label}</span>
+                  <span className="text-slate-400"> — {w.note}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {e.active && e.moved.length > 0 && (
+            <div>
+              <div className="text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+                Against the popularity default
+              </div>
+              <div className="mt-1 space-y-0.5">
+                {e.moved.map((m) => (
+                  <div key={m.productId} className="flex items-center gap-1.5 text-[10px]">
+                    <ArrowUp
+                      className={`h-2.5 w-2.5 shrink-0 ${m.delta > 0 ? 'text-emerald-600' : 'text-slate-300 rotate-180'}`}
+                    />
+                    <span
+                      className={`font-mono font-bold tabular-nums shrink-0 ${
+                        m.delta > 0 ? 'text-emerald-600' : 'text-slate-400'
+                      }`}
+                    >
+                      {m.from}→{m.to}
+                    </span>
+                    <span className="truncate text-slate-700">{m.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+              Top of the grid, term by term
+            </div>
+            <div className="mt-1 space-y-1.5">
+              {e.items.slice(0, 4).map((it) => (
+                <div key={it.product.id} className="rounded-md border border-slate-200 px-2 py-1.5">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-mono text-[9.5px] font-bold tabular-nums text-slate-400 shrink-0">
+                      {it.rank}
+                    </span>
+                    <span className="text-[10.5px] font-semibold text-slate-900 truncate flex-1">
+                      {it.product.name}
+                    </span>
+                    <span className="font-mono text-[9.5px] font-bold tabular-nums text-slate-900 shrink-0">
+                      {it.score.toFixed(3)}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 font-mono text-[9px] text-slate-500 leading-snug">
+                    base {it.base.toFixed(2)} x multiplier {it.multiplier.toFixed(3)}
+                    {it.drivers.length > 0 && (
+                      <>
+                        {' = 1'}
+                        {it.drivers.map((d) => (
+                          <span key={d.label}>
+                            {' + '}
+                            {d.weight.toFixed(1)}x{d.value.toFixed(2)}
+                          </span>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                  {it.drivers.length > 0 && (
+                    <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
+                      {it.drivers.map((d) => (
+                        <span key={d.label} className="text-[9px] text-slate-500">
+                          {d.label}{' '}
+                          <span className="font-mono font-bold text-slate-700 tabular-nums">
+                            +{d.contribution.toFixed(3)}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-[9.5px] text-slate-400 leading-snug border-t border-slate-100 pt-1.5">
+            Ranking only. This scorer decides order and never membership — every product listed above
+            was already in the result set the shopper's own filters produced.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /* -------------------------------------------------------------------- tab -- */
 
 export const DecisionsTab: React.FC = () => {
-  const { decisions } = useApp();
+  const { decisions, lastRanking } = useApp();
   const scroller = useRef<HTMLDivElement>(null);
 
   // Newest first, and pinned to the top on arrival of a new decision. A stream
@@ -356,8 +515,9 @@ export const DecisionsTab: React.FC = () => {
 
   if (!ordered.length) {
     return (
-      <div className="h-full grid place-items-center px-6 text-center">
-        <div>
+      <div className="h-full overflow-y-auto px-3 py-3 space-y-3">
+        {lastRanking && <RankingCard explanation={lastRanking} />}
+        <div className="px-3 pt-4 text-center">
           <p className="text-[12px] font-bold text-slate-700">No decisions yet this session.</p>
           <p className="mt-1 text-[10.5px] text-slate-500 leading-snug">
             The Profile tab is not empty because it arrived seeded — prior sessions, orders and CRM
@@ -375,6 +535,7 @@ export const DecisionsTab: React.FC = () => {
 
   return (
     <div ref={scroller} className="h-full overflow-y-auto px-3 py-3 space-y-2">
+      {lastRanking && <RankingCard explanation={lastRanking} />}
       {ordered.map((entry, i) => (
         <DecisionCard key={entry.id} entry={entry} defaultOpen={i === 0} />
       ))}

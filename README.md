@@ -52,10 +52,15 @@ Other scripts:
 ~0.9 MB HTML file with the JS, CSS and all imagery inlined. Double-clicking it opens the
 full prototype with no install and no network.
 
-## The six demo moments
+## The demo moments
 
 The left nav is ordered for a walkthrough. The intended path:
 
+0. **Type into the search box.** `something for my son` maps to the Kids department plus a
+   gift intent; `hurts beanie` matches nothing and relaxes its constraints least-certain-first
+   rather than returning an empty page; `hur` completes to Jalen Hurts with the autocomplete
+   rows ranked by profile and their un-personalized positions shown beside them. Every search
+   lands on the catalog page, which is where moments 1 and 2 continue.
 1. **Personalization ON vs OFF** — toggle in the header. With it off the storefront falls
    back to national popularity and alphabetical ordering, and the product rail changes
    from one team to a mixed grid. The difference is structural, not cosmetic.
@@ -70,6 +75,13 @@ The left nav is ordered for a walkthrough. The intended path:
 6. **Business impact** — accept a cross-sell in the cart. The attribution block splits the
    basket into shopper-initiated and engine-contributed value, and a behavioural event is
    written to the stream.
+7. **The filter rail re-sequences itself.** On the catalog page, tick Jerseys then Men and
+   watch the next question offered change from Player to Size. The mix bar in the rail
+   header shows the handover from the model to the funnel as it happens.
+8. **"Recommended" explains itself.** The default sort is an explicit model output. Open
+   the disclosure under the sort control, or the pinned card at the top of the Decisions
+   tab, for the scorer, its weights, the per-product driver breakdown, and where each item
+   would have sat under popularity alone.
 
 Five preset scenarios along the top drive all of this; the ML Intelligence Trace panel on
 the right shows the seven-step decision sequence for whatever is currently on screen.
@@ -81,9 +93,11 @@ src/
   sim/         The simulated world: taxonomy, catalog generator, population
                and behaviour model, seeded RNG, and the season clock that
                carries the calendar and the market-event log. Deterministic.
-  ml/          The engines: intent, similarity, complement, shared embeddings,
-               the offline evaluation harness, the paired counterfactual that
-               measures shopper effort, and the session effort ledger.
+  ml/          The engines: intent, similarity, complement, query understanding
+               and the Recommended ranker, plus shared embeddings, the visitor
+               profile fold, the offline evaluation harness, the paired
+               counterfactual that measures shopper effort, and the session
+               effort ledger.
   components/
     storefront/    The shopping experience
     intelligence/  Explanation, evidence, architecture and partnership screens
@@ -99,23 +113,31 @@ src/
 
 ## Current offline results
 
-From `npm run sim:eval` at n = 2000. Reproduced live on the Model Evidence tab.
+From `npm run sim:eval` at n = 2000. Reproduced live on the Model Evidence tab. This is
+the current harness — the one where a session draws a department mission at its start and
+the held-out target is something the shopper actually chose. `WHAT-WE-BUILT.md` §9 carries
+the retired harness alongside it and explains why the two are not comparable.
 
 | Engine | Metric | Model | Popularity baseline | Lift |
 | --- | --- | --- | --- | --- |
-| Intent — team | Recall@1 | 41.1% | 21.3% | 1.93x |
-| Intent — team | NDCG@10 | 69.7% | 59.3% | 1.18x |
-| Intent — department | Recall@1 | 19.7% | 17.5% | 1.12x |
-| Intent — department | Recall@3 | 54.6% | 57.9% | **0.94x** |
-| Similarity | Recall@1 | 4.5% | 1.1% | 4.09x |
-| Similarity | NDCG@10 | 6.2% | 1.4% | 4.43x |
-| Complement | Recall@1 | 2.9% | 2.9% | 1.00x |
-| Complement | NDCG@10 | 9.4% | 6.9% | 1.37x |
+| Intent — team | Recall@1 | 40.0% | 24.1% | 1.66x |
+| Intent — team | NDCG@10 | 69.7% | 62.0% | 1.12x |
+| Intent — department | Recall@1 | 27.7% | 18.5% | 1.50x |
+| Intent — department | Recall@3 | 64.4% | 65.8% | **0.98x** |
+| Similarity | Recall@1 | 7.8% | 2.1% | 3.63x |
+| Similarity | NDCG@10 | 8.2% | 2.0% | 4.11x |
+| Complement | Recall@1 | 2.9% | 2.7% | 1.08x |
+| Complement | NDCG@10 | 8.8% | 7.9% | 1.11x |
 
-Two of these are unflattering and are left in deliberately. Department intent **loses** to
-popularity at Recall@3, because department mix is far less person-specific than team
-allegiance. Complement ties popularity on the first pick and only wins on the ordering of
-the rest. Both are stated on the screens that report them.
+Two of these are unflattering and are left in deliberately. Department intent still
+**loses** to popularity at Recall@3, because department mix is far less person-specific
+than team allegiance. Complement barely beats popularity on the first pick and wins mostly
+on the ordering of the rest. Both are stated on the screens that report them.
+
+The query engine is **not** in this table, and should not be. Recovery metrics need a
+held-out truth the simulator knows; there are no query logs in a synthetic world. It has
+13 unit tests asserting its behaviour against the real generated catalog instead
+(`npm test`).
 
 ## Notes for whoever picks this up next
 

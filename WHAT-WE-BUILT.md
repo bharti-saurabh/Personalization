@@ -53,8 +53,9 @@ The shopping experience a customer would actually see. It is the default view an
 
 | Page | What it demonstrates |
 | --- | --- |
+| **Search** | A box that maps free text onto taxonomy nodes, completes it ranked by profile, and never returns an empty page — see §3.1–3.3 |
 | **Home** | Personalized hero bound to the predicted club, a predicted-teams widget ordered by posterior probability, a department strip ordered by department intent, and a "Picked for you" carousel ranked by the intent model and filtered to what is in stock |
-| **Catalog** | A faceted listing page whose **filter order re-sequences as you shop** — see §4 |
+| **Catalog** | The search results page *and* the browse page. Query understanding, zero-result rescue, a filter rail whose **order re-sequences as you shop**, and a default sort that is an explicit model output — see §3 |
 | **Product** | Similarity ("You may also like") and complement ("Complete the look") rails, each with the engine that produced them named and the score explained in words |
 | **Cart** | "Fans Also Add" cross-sell driven by the complement engine, with basket value attributed to recommendations rather than an asserted lift |
 
@@ -97,10 +98,198 @@ no entry ends on a posterior.
 
 ---
 
-## 3. The three engines
+## 3. The main demo path: search → catalog → product
 
-All three are in `src/ml/`. None of them has a React or DOM dependency, so they run from
-the command line under `tsx` — which is how the evaluation harness works.
+This is the section to demo slowly. It is one continuous path, and each step is a
+different kind of personalization: **understanding** what was asked, **ordering** what
+came back, and **choosing what to ask next**.
+
+### 3.1 The search box maps free text onto the taxonomy
+
+A storefront search bar is usually a substring match over product names. This one was
+too, and it failed the way they all fail: type *something for my son* and you get an
+empty page, because no product is called that.
+
+`src/ml/query.ts` runs four stages over the raw string — **interpret, propagate,
+retrieve, rank** — and publishes every one of them to the screen.
+
+| Typed | Interpreted as |
+| --- | --- |
+| `hurts jersey` | player **Jalen Hurts** 82% (surname), department **Jerseys** 95% (synonym), team **Eagles** 49% *(inferred)*, league **NFL** 25% *(inferred)* |
+| `something for my son` | department **Kids** 85% (phrase), **gift intent** 85% |
+| `philadelphia hoodie` | teams **Eagles / 76ers / Phillies**, all at 45% — a city that names three clubs is ambiguous, and the interpreter says so instead of guessing |
+| `eagles cap under $40` | team **Eagles**, department **Hats**, price ceiling **$40** |
+| `xyzzy plugh` | nothing — and that is the interesting case, see 3.3 |
+
+Two properties are worth pointing at:
+
+- **Inferred nodes are drawn differently from typed ones.** A player implies their club
+  implies their league, damped at each step (×0.6, then ×0.5). Those inferences steer the
+  ranking, but the chip that shows them says `inferred`, because rendering them like
+  something the shopper typed would be a quiet fabrication. The same damping constants
+  are the ones the visitor profile uses for cross-field propagation — one rule, one place.
+- **Ambiguity survives to the ranking.** *Philadelphia* emits all three clubs at a
+  reduced confidence rather than resolving to the biggest one. The rescue ladder below
+  then drops the least-certain constraint first, which is only meaningful if confidence
+  was recorded honestly in the first place.
+
+**Gift intent is personalization deciding to switch itself off.** *For my son* emits two
+separate nodes — the Kids department, and a gift trait — and the gift trait removes the
+shopper's own player affinity from the ranking and suppresses the saved-size prefill on
+the catalog page. Personalizing a present toward the person buying it is the single
+fastest way to make a system feel like it is watching rather than helping.
+
+What it deliberately does **not** do: spell correction, embeddings, learned synonyms.
+None of those can be demonstrated honestly against a synthetic catalog with no query
+logs, and a demo that fakes them is worse than one that says so.
+
+### 3.2 Autocomplete ranked by profile
+
+The dropdown has two bands — **scopes** (searches to run) and **products** — and each is
+ordered by the visitor profile. Beside every scope row that moved sits the position it
+would have held without the profile:
+
+```
+Jerseys · Eagles      2 → 1
+Jerseys · Cowboys     1 → 2
+Jerseys               3 → 3
+```
+
+Both orders are computed in the same pass over the same pool, one with the profile and
+one without, so `2 → 1` is a **count of rows the shopper did not read past**, not an
+estimate. With personalization off, the un-personalized band is not empty and not
+arbitrary: it falls back to the busiest clubs by market size and the widest departments
+by assortment weight — a genuine merchandised default.
+
+Above the rows, a chip strip shows the interpretation updating **as the sentence is still
+being typed**. That is the demo moment.
+
+### 3.3 Zero-result rescue
+
+A zero-result page is the most expensive screen in retail. This build does not have one.
+
+Type `hurts beanie` — a real player and a real product type that never co-occur in the
+catalog. Exact matches: **0**. What happens next is a ladder, and every rung is on screen:
+
+| Dropped | Why | Results after |
+| --- | --- | --- |
+| league NFL (25%) | least certain of the remaining constraints | 0 |
+| team Eagles (49%) | least certain of the remaining constraints | 0 |
+| subdepartment Beanie (70%) | least certain of the remaining constraints | 0 |
+| player Jalen Hurts (82%) | least certain of the remaining constraints | **136** |
+
+Constraints come off **least-certain-first**, which is the only ordering that can be
+defended, and nothing that comes off is forgotten: a dropped constraint is **degraded
+into a ranking credit**, worth `0.4 × its confidence`. So the page that comes back is not
+an arbitrary list of beanies — it is beanies with Eagles and Hurts-adjacent stock at the
+top.
+
+When *nothing* in the query maps onto the catalog at all (`xyzzy plugh`), the fallback is
+the whole catalog ranked by profile affinity, with the page saying plainly that the query
+matched nothing. An empty page tells the shopper to leave. A profile-ranked page tells
+them the site still knows who they are.
+
+The rescue is also the one search event that writes to the effort ledger, as a `dead_end`
+avoided — and only when personalization is on, because that is the only condition under
+which the un-personalized store would genuinely have shown the empty page.
+
+### 3.4 The catalog page re-sequences its own filters
+
+A conventional faceted listing has a fixed filter order — Department, Gender, Player,
+Size, Price — and it never changes. That order is wrong twice over: it ignores what the
+model knows about the shopper before they have clicked anything, and it ignores where in
+the funnel they have got to after they have.
+
+The rail here splits into two bands. **Answered facets rise to the top** in funnel order,
+so what you have already decided reads as a summary. **Everything else is ranked** by:
+
+```
+score = informationGain(facet) × ( (1 − t)·intentRank + t·funnelRank )
+where  t = min(1, answeredCount / 3)
+```
+
+- With **nothing selected**, `t = 0` and the order is purely the intent model's opinion.
+  The badge on the top facet reads `ML RANKED`, because that is what it is.
+- By the **third selection**, `t = 1` and the order is purely the shopping funnel from
+  wherever the shopper has got to. The badge reads `NEXT BEST`, because the model has
+  nothing useful left to say and claiming otherwise would be a lie.
+- **Normalised Shannon entropy multiplies through**, so a facet with nothing left to
+  split — Size once you have filtered to Hats, Team once you have picked one club —
+  sinks on its own. No hide rules, no special cases.
+
+Observed behaviour, Dallas Cowboys:
+
+| Cowboys | + Jerseys | + Men |
+| --- | --- | --- |
+| Size `ML RANKED` | Size `ML RANKED` | **Size `NEXT BEST`** |
+| Player `ML RANKED` | Player `ML RANKED` | Player |
+| Category | Gender | Price |
+| Price | Price | |
+
+Pick Jerseys and Men, and the next filter offered is **Size**, not Player. The banner
+above the rail changes text to say which of the two orderings is currently running.
+
+---
+
+---
+
+### 3.5 "Recommended" is a model output, and says so
+
+The catalog's default sort used to be called **Featured**. That was the wrong word twice
+over. On a real storefront, *Featured* names a shelf a merchandiser ordered by hand — so
+calling a model output *Featured* hides the model. And it was the only ranked surface in
+the build with no explanation attached to it.
+
+The comparator moved out of the component into `src/ml/ranking.ts` **byte-identically**,
+and a regression test re-implements the old inline lambda and asserts the two orders match
+across 300 products. This was a relocation, not a re-tune: the order a client saw last
+week is the order they see now.
+
+```
+score = (popularity / 100) × (1 + 2.0 × P(team) + 1.2 × P(department))
+```
+
+Now that it is a named model output, it publishes what a model output owes:
+
+- the **scorer and its weights**, in full, so anyone can multiply the numbers themselves;
+- **per-product drivers** — the multiplier is the sum of its own driver contributions by
+  construction, so the breakdown adds up rather than being a plausible-looking attribution;
+- the **displaced positions**: where each of the visible top six would have sat under
+  popularity alone. Both orderings are computed in the same pass over the same pool, which
+  is what makes those positions a measurement.
+
+It appears twice: inline on the catalog page under the sort control, where the claim is
+made, and as a pinned card in the **Decisions** tab. It is pinned rather than folded into
+the stream because the Recommended order is not an event — it is the standing state of
+the page, re-decided on every render.
+
+With the switch off, or with confidence under the gate, the card says the order is plain
+popularity and shows no movement, because there is none.
+
+On a **search** results page this scorer stands down, and the query engine's own ranking
+takes over: `(relevance + soft credit) × (1 + 1.4·P(team) + 0.8·P(dept) + 1.6·P(player))`.
+The shopper has just said what they want in words, and popularity × intent posterior is a
+strictly worse-informed guess than that. Relevance and affinity **multiply** rather than
+add, so a product this shopper would love that does not answer the question still cannot
+outrank one that does.
+
+Across all of it, one invariant: **ranking only, never membership.** Nothing on the page
+is filtered out on the model's say-so. What is in the result set is decided by the
+shopper's filters and their query, and by nothing else.
+
+---
+
+## 4. The engines
+
+Everything in `src/ml/` — the three scoring engines below, plus the query engine (§3.1)
+and the Recommended ranker (§3.5). None of them has a React or DOM dependency, so they
+run from the command line under `tsx`, which is how the evaluation harness works.
+
+The three below are the ones the offline harness scores, because they are the three that
+predict something the simulator also knows the answer to. The query engine is not in that
+table and should not be: there are no query logs in a synthetic world, so there is no
+held-out truth to recover. What it has instead are 13 unit tests asserting its behaviour
+against the real generated catalog.
 
 ### Intent — *which club and which department is this shopper in the market for?*
 
@@ -172,46 +361,6 @@ there was only ever one.
 Team consistency is a hard business rule, not a score — a Cowboys hat does not complete
 an Eagles jersey. Price compatibility is a soft one: a $400 signed jersey is a poor add-on
 to a $30 cap.
-
----
-
-## 4. The catalog page re-sequences its own filters
-
-This is the piece worth demoing slowly.
-
-A conventional faceted listing has a fixed filter order — Department, Gender, Player,
-Size, Price — and it never changes. That order is wrong twice over: it ignores what the
-model knows about the shopper before they have clicked anything, and it ignores where in
-the funnel they have got to after they have.
-
-The rail here splits into two bands. **Answered facets rise to the top** in funnel order,
-so what you have already decided reads as a summary. **Everything else is ranked** by:
-
-```
-score = informationGain(facet) × ( (1 − t)·intentRank + t·funnelRank )
-where  t = min(1, answeredCount / 3)
-```
-
-- With **nothing selected**, `t = 0` and the order is purely the intent model's opinion.
-  The badge on the top facet reads `ML RANKED`, because that is what it is.
-- By the **third selection**, `t = 1` and the order is purely the shopping funnel from
-  wherever the shopper has got to. The badge reads `NEXT BEST`, because the model has
-  nothing useful left to say and claiming otherwise would be a lie.
-- **Normalised Shannon entropy multiplies through**, so a facet with nothing left to
-  split — Size once you have filtered to Hats, Team once you have picked one club —
-  sinks on its own. No hide rules, no special cases.
-
-Observed behaviour, Dallas Cowboys:
-
-| Cowboys | + Jerseys | + Men |
-| --- | --- | --- |
-| Size `ML RANKED` | Size `ML RANKED` | **Size `NEXT BEST`** |
-| Player `ML RANKED` | Player `ML RANKED` | Player |
-| Category | Gender | Price |
-| Price | Price | |
-
-Pick Jerseys and Men, and the next filter offered is **Size**, not Player. The banner
-above the rail changes text to say which of the two orderings is currently running.
 
 ---
 
@@ -743,6 +892,9 @@ they do (Intent, Similarity, Complement) rather than for any product.
   shown, with the reason.
 - **No stock imagery, no external fonts-as-images, no API keys.** Unplug the network and
   it still runs.
+- **No spell correction, embeddings or learned synonyms in search.** The taxonomy is the
+  universe the query engine can map onto, and it says so. None of the three can be shown
+  honestly without query logs, and this world has none.
 
 ---
 

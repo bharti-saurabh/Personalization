@@ -36,8 +36,9 @@ import {
 import { CONFIDENCE_THRESHOLD, IntentResult } from './intent';
 import { SimilarityResult } from './similarity';
 import { ComplementResult } from './complement';
+import type { SearchResult } from './query';
 
-export type EngineName = 'Intent' | 'Similarity' | 'Complement';
+export type EngineName = 'Intent' | 'Similarity' | 'Complement' | 'Query';
 
 export interface ScoreRow {
   label: string;
@@ -144,6 +145,15 @@ export interface BeatInput {
   anchor: Product;
   personalizationOn: boolean;
   market?: MarketBeat;
+  /**
+   * Present only on the beat caused by a typed query.
+   *
+   * Search is the one surface where the shopper says what they want in words
+   * rather than by clicking something, so the beat that reports it has to show
+   * the interpretation - otherwise the panel records "searched for X" and never
+   * explains what the system decided X meant.
+   */
+  search?: SearchResult;
 }
 
 const pct = (v: number) => Math.round(v * 100);
@@ -286,6 +296,53 @@ function complementRun(i: BeatInput): ModelRun | null {
  * bound to the standing prediction - and claiming a change that did not happen
  * is exactly the kind of thing this panel exists to disprove.
  */
+/**
+ * The query run: free text in, taxonomy nodes out.
+ *
+ * This is the only engine in the build whose input is a string the shopper
+ * typed, and it is scored differently from the others for that reason. The
+ * others publish a posterior over a fixed set of options; this one publishes a
+ * per-node confidence, and the confidences are not a distribution - they do not
+ * sum to one and are not meant to. Each is a separate answer to a separate
+ * question ("is this word a player?", "is this word a department?"), so the bar
+ * beside each node is read on its own, not against its neighbours.
+ */
+function queryRun(i: BeatInput): ModelRun | null {
+  const search = i.search;
+  if (!search) return null;
+
+  const { interpretation: q } = search;
+  const resolved = q.nodes.filter((n) => n.via !== 'propagated');
+  const inferred = q.nodes.filter((n) => n.via === 'propagated');
+
+  const inputs: { label: string; value: string }[] = [
+    { label: 'Query', value: `"${q.raw}"` },
+    { label: 'Tokens', value: `${q.tokens.length}` },
+    { label: 'Nodes resolved', value: `${resolved.length} matched, ${inferred.length} inferred` },
+    { label: 'Unmapped words', value: q.unmatched.length ? q.unmatched.join(', ') : 'none' },
+    { label: 'Constraints applied', value: `${search.applied.length} of ${search.constraints.length}` },
+  ];
+
+  const verdict = search.rescue
+    ? search.rescue.kind === 'profile'
+      ? `${search.matchedBeforeRescue} exact matches. ${search.rescue.headline} - ${search.matched.length} products ranked by profile affinity instead of an empty page.`
+      : `${search.matchedBeforeRescue} exact matches. ${search.rescue.steps.length} constraint(s) relaxed weakest-first to reach ${search.matched.length}.`
+    : `${search.matched.length} products satisfy every interpreted constraint.`;
+
+  return {
+    engine: 'Query',
+    question: 'What did the shopper actually ask for?',
+    inputs,
+    scoreLabel: 'match confidence per node',
+    scores: q.nodes.slice(0, 6).map((n) => ({
+      label: `${n.kind}: ${n.value}`,
+      score: n.confidence,
+      hint: n.span ? `"${n.span}" via ${n.via}` : `inferred, ${n.via}`,
+    })),
+    verdict,
+  };
+}
+
 function surfacesFor(i: BeatInput): SurfaceChange[] {
   const { intent, trace, page, personalizationOn } = i;
 
@@ -334,23 +391,44 @@ function surfacesFor(i: BeatInput): SurfaceChange[] {
   }
 
   if (page === 'plp') {
+    if (i.search) {
+      const s = i.search;
+      out.push({
+        surface: 'Search result set',
+        detail: s.rescue
+          ? `${s.rescue.headline}. ${s.rescue.detail}`
+          : `${s.matched.length} products satisfy the interpreted query. The constraints came from the shopper's words, not from the model.`,
+        items: s.applied.map((c) => c.label),
+        isFallback: s.rescue?.kind === 'profile',
+      });
+      out.push({
+        surface: 'Search result order',
+        detail: s.personalized
+          ? 'Relevance times profile affinity. Personalization decides the order; it never decides membership.'
+          : 'Relevance only. Profile affinity is switched off, so this is the same order any anonymous visitor would see.',
+        items: s.hits.slice(0, 3).map((h) => `${h.rank}. ${h.product.name}${h.defaultRank !== h.rank ? ` (was ${h.defaultRank})` : ''}`),
+        isFallback: !s.personalized,
+      });
+    }
     out.push({
       surface: 'Facet rail order',
       detail: `Re-ranked for a ${dept} shopper. The top two facets carry the ML RANKED badge.`,
       items: intent.topFilters.slice(0, 5),
     });
     out.push({
-      surface: 'Featured sort',
+      surface: 'Recommended sort',
       detail: fell
-        ? 'Gate not cleared - Featured is plain popularity, identical to the personalization-off page.'
+        ? 'Gate not cleared - Recommended is plain popularity, identical to the personalization-off page.'
         : `Popularity reweighted by the team and department posteriors, so ${team} ${dept} float up without being filtered in.`,
       isFallback: fell,
     });
-    out.push({
-      surface: 'Result set',
-      detail:
-        'Unchanged by the model. Filtering stays exactly what the shopper asked for - only the ordering is personalized.',
-    });
+    if (!i.search) {
+      out.push({
+        surface: 'Result set',
+        detail:
+          'Unchanged by the model. Filtering stays exactly what the shopper asked for - only the ordering is personalized.',
+      });
+    }
   }
 
   if (page === 'pdp') {
@@ -412,6 +490,30 @@ function whySentence(i: BeatInput): string {
       : 'Personalization switched off. The engines still run - the panel keeps scoring - but the storefront ignores the output and serves popularity, which is the control arm of the comparison.';
   }
 
+  // A typed query explains itself better than any posterior movement can: the
+  // shopper stated their intent, and the interesting question is what the
+  // system decided the words meant.
+  if (i.search) {
+    const s = i.search;
+    const named = s.interpretation.nodes
+      .filter((n) => n.via !== 'propagated')
+      .map((n) => `"${n.span}" -> ${n.kind} ${n.value}`)
+      .join(', ');
+    const inferred = s.interpretation.nodes.filter((n) => n.via === 'propagated');
+    const chain = inferred.length
+      ? ` ${inferred.map((n) => `${n.value} was inferred at ${pct(n.confidence)}%, damped because it was never typed`).join('; ')}.`
+      : '';
+    const head = named
+      ? `The query mapped onto the taxonomy as ${named}.`
+      : `Nothing in the query mapped onto the taxonomy.`;
+    const tail = s.rescue
+      ? s.rescue.kind === 'profile'
+        ? ` ${s.rescue.headline}, so the page fell back to profile affinity over ${s.matched.length} products rather than showing an empty result.`
+        : ` ${s.rescue.steps.length} constraint(s) were dropped weakest-first to reach ${s.matched.length} products; each dropped constraint stays on as a ranking bonus, so the results still lean toward what was asked for.`
+      : ` ${s.matched.length} products satisfy it, ordered by relevance times profile affinity.`;
+    return `${head}${chain}${tail}`;
+  }
+
   const carriedTeam = event?.team;
   const carriedDept = event?.department;
   const weight =
@@ -460,7 +562,10 @@ function whySentence(i: BeatInput): string {
 export function buildBeat(i: BeatInput): JournalBeat {
   const { intent, prevIntent, trace, event, page } = i;
 
-  const runs: ModelRun[] = [...intentRuns(i)];
+  // Query runs first when there was one: it is the run that decided what the
+  // page is even about, and the intent posterior below is downstream of it.
+  const q = queryRun(i);
+  const runs: ModelRun[] = q ? [q, ...intentRuns(i)] : [...intentRuns(i)];
   // The retrieval engines only re-score when there is an anchor on screen, so a
   // homepage or category beat honestly shows only the intent run.
   if (page === 'pdp') {

@@ -13,15 +13,30 @@
  *
  * The personalization layer sits on top of that, and only on top: when it is
  * on, the facet groups are ordered by predicted intent, team and department
- * values carry their predicted probability, and the default "Featured" sort is
- * intent-weighted. Turn it off and this becomes an ordinary popularity-sorted
+ * values carry their predicted probability, and the default "Recommended" sort
+ * is intent-weighted. Turn it off and this becomes an ordinary popularity-sorted
  * category page - which is the comparison the demo exists to make.
+ *
+ * THIS PAGE IS ALSO THE SEARCH RESULTS PAGE. A typed query lands here rather
+ * than jumping straight to a product, because the interesting thing about a
+ * query is not which product it finds - it is what the system decided the words
+ * meant, what it did when the catalog could not satisfy them, and what it asks
+ * the shopper next. All three of those are on this page, and the third one is
+ * the facet rail below.
+ *
+ * "FEATURED" IS NOW "RECOMMENDED", and the arithmetic behind it moved out to
+ * ml/ranking.ts unchanged. Featured was the wrong word: on a real storefront it
+ * names a shelf a merchandiser ordered by hand, and this one was a model output
+ * with no explanation attached to it. Same order, named honestly, with the
+ * scorer, its weights and its displaced positions now published to the panel.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
 import { rankMove, saving } from '../../ml/effort';
+import { rankRecommended, RECOMMENDED_FORMULA } from '../../ml/ranking';
+import { SearchUnderstanding } from './SearchUnderstanding';
 import { CONFIDENCE_THRESHOLD } from '../../ml/intent';
 import { Department, League, Product, TeamId } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
@@ -149,7 +164,7 @@ const informationGain = (tally: Map<string, number>): number => {
 const priceLabel = (id: string) => PRICE_BANDS.find((b) => b.id === id)?.label ?? id;
 
 const SORTS = [
-  { id: 'featured', label: 'Featured' },
+  { id: 'recommended', label: 'Recommended' },
   { id: 'best', label: 'Best Sellers' },
   { id: 'new', label: 'Newest Arrivals' },
   { id: 'price_low', label: 'Price: Low to High' },
@@ -178,6 +193,9 @@ export const ProductListingPage: React.FC = () => {
     visitorProfile,
     recordEffort,
     userEvents,
+    searchResult,
+    clearSearch,
+    publishRanking,
   } = useApp();
 
   const [sel, setSel] = useState<Selections>(() => ({
@@ -186,9 +204,10 @@ export const ProductListingPage: React.FC = () => {
     department: activeDeptFilter ? [activeDeptFilter] : [],
     league: activeLeagueFilter ? [activeLeagueFilter] : [],
   }));
-  const [sortBy, setSortBy] = useState<SortId>('featured');
+  const [sortBy, setSortBy] = useState<SortId>('recommended');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [whyOpen, setWhyOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // The header's category links and the intelligence panel both drive the two
@@ -229,21 +248,42 @@ export const ProductListingPage: React.FC = () => {
       return f.values(p).some((v) => chosen.includes(v));
     });
 
-  const filtered = useMemo(() => products.filter((p) => passes(p, sel)), [products, sel]);
+  /**
+   * What this page is a page OF.
+   *
+   * Browsing, that is the whole catalog and the facets narrow it. Searching, it
+   * is the query's result set and the facets narrow that instead. The
+   * distinction matters for the counts: faceting a search against the full
+   * catalog would offer the shopper a Size XL with 90 next to it and then show
+   * them four products, because 86 of those ninety were never in the result set.
+   */
+  const pool = searchResult ? searchResult.matched : products;
+
+  /**
+   * The same result set with the profile taken out.
+   *
+   * For a search that is the relevance-only order the engine computed in the
+   * same pass; for a browse it is sales rank, which is what an un-personalized
+   * Recommended shelf collapses to. Either way it is the control arm, and it is
+   * computed from the same inputs at the same moment as the order on screen.
+   */
+  const defaultPool = searchResult ? searchResult.defaultOrder : products;
+
+  const filtered = useMemo(() => pool.filter((p) => passes(p, sel)), [pool, sel]);
 
   /** Per-facet value counts, each computed with that facet's own picks ignored. */
   const facetCounts = useMemo(() => {
     const out: Record<FacetKey, Map<string, number>> = {} as any;
     for (const f of FACETS) {
       const tally = new Map<string, number>();
-      for (const p of products) {
+      for (const p of pool) {
         if (!passes(p, sel, f.key)) continue;
         for (const v of f.values(p)) tally.set(v, (tally.get(v) ?? 0) + 1);
       }
       out[f.key] = tally;
     }
     return out;
-  }, [products, sel]);
+  }, [pool, sel]);
 
   const teamProb = useMemo(
     () => new Map(intentPrediction.teams.map((t) => [t.team as string, t.probability])),
@@ -253,6 +293,42 @@ export const ProductListingPage: React.FC = () => {
     () => new Map(intentPrediction.departments.map((d) => [d.department as string, d.probability])),
     [intentPrediction]
   );
+
+  /**
+   * The Recommended order, as an explicit model output.
+   *
+   * Only computed when the shopper is browsing. On a search the query engine
+   * has already ranked the pool - by relevance times profile affinity, which is
+   * a strictly better-informed ranking than popularity times intent posterior,
+   * because the shopper has just told it what they want in words. Running a
+   * second ranker over the first one's output would throw that away.
+   */
+  const recommended = useMemo(
+    () =>
+      searchResult
+        ? null
+        : rankRecommended(filtered, {
+            teamProb,
+            deptProb,
+            personalizationOn: isPersonalizationOn,
+            surface: 'Category page grid',
+          }),
+    [searchResult, filtered, teamProb, deptProb, isPersonalizationOn]
+  );
+
+  /**
+   * Position in the un-personalized order, for every product in the result set.
+   *
+   * Only ever read by the effort ledger - nothing renders from it - so the
+   * shopper's grid is unaffected by its existence. Computed here rather than at
+   * click time so it is provably the same result set the shopper was looking at.
+   */
+  const defaultPosition = useMemo(() => {
+    const m = new Map<string, number>();
+    const inSet = new Set(filtered.map((p) => p.id));
+    defaultPool.filter((p) => inSet.has(p.id)).forEach((p, i) => m.set(p.id, i + 1));
+    return m;
+  }, [filtered, defaultPool]);
 
   const sorted = useMemo(() => {
     const arr = filtered.slice();
@@ -267,36 +343,31 @@ export const ProductListingPage: React.FC = () => {
         return arr.sort((a, b) => effPrice(b) - effPrice(a));
       case 'rating':
         return arr.sort((a, b) => b.rating - a.rating || b.reviewCount - a.reviewCount);
-      case 'featured':
+      case 'recommended':
       default:
-        // With personalization off this is plain popularity, which is exactly
-        // what an un-personalized "Featured" shelf is. With it on, popularity is
-        // reweighted by how likely this shopper is to want that team and
-        // department - the same two distributions the panel is displaying.
-        if (!isPersonalizationOn) return arr.sort((a, b) => b.popularity - a.popularity);
-        return arr.sort((a, b) => {
-          const score = (p: Product) =>
-            (p.popularity / 100) * (1 + 2.0 * (teamProb.get(p.team) ?? 0) + 1.2 * (deptProb.get(p.department) ?? 0));
-          return score(b) - score(a);
-        });
+        if (searchResult) {
+          // `filtered` already carries the engine's order, because `pool` did.
+          // With the switch off, fall back to the relevance-only order the same
+          // pass computed - so flipping personalization re-orders a search
+          // result exactly the way it re-orders everything else on this page.
+          if (isPersonalizationOn) return arr;
+          const rank = defaultPosition;
+          return arr.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+        }
+        return recommended!.ordered.slice();
     }
-  }, [filtered, sortBy, isPersonalizationOn, teamProb, deptProb]);
+  }, [filtered, sortBy, isPersonalizationOn, searchResult, defaultPosition, recommended]);
 
-  /**
-   * The same result set as the un-personalized store would order it.
+  /*
+   * Publish the Recommended explanation to the panel.
    *
-   * Sales rank, which is what "Featured" collapses to with the switch off. Only
-   * ever read by the effort ledger - nothing renders from it - so the shopper's
-   * grid is unaffected by its existence. Computed here rather than at click
-   * time so it is provably the same result set the shopper was looking at.
+   * One-way: the panel reads it and cannot write back. An explanation that can
+   * change the outcome it explains is not an explanation, and this is the only
+   * wire between the grid and the trace.
    */
-  const defaultPosition = useMemo(() => {
-    const m = new Map<string, number>();
-    [...filtered]
-      .sort((a, b) => b.popularity - a.popularity)
-      .forEach((p, i) => m.set(p.id, i + 1));
-    return m;
-  }, [filtered]);
+  useEffect(() => {
+    if (recommended && sortBy === 'recommended') publishRanking(recommended);
+  }, [recommended, sortBy, publishRanking]);
 
   // A narrower result set should start from the top, not halfway down a long
   // scroll of a previous, larger result set.
@@ -351,7 +422,7 @@ export const ProductListingPage: React.FC = () => {
    * is what lets the effort ledger say where a facet WOULD have been when the
    * shopper picks one. Paired at the moment of the decision, per ml/effort.ts.
    */
-  const { railFacets, defaultRailKeys } = useMemo(() => {
+  const { railFacets, defaultRailKeys, railMix, railMoved } = useMemo(() => {
     const answered: FacetDef[] = [];
     const remaining: FacetDef[] = [];
     for (const f of FACETS) (sel[f.key].length > 0 ? answered : remaining).push(f);
@@ -390,6 +461,14 @@ export const ProductListingPage: React.FC = () => {
     // shaping the order while t < 1, and after that the rail is following the
     // funnel from where the shopper has got to.
     const intentStillLeading = isPersonalizationOn && t < 1;
+    const defaultOrdered = orderAt(1);
+    const defaultKeys = [...answered.map((f) => f.key), ...defaultOrdered.map((f) => f.key)];
+
+    // How many questions the rail is asking in a different order than the
+    // un-personalized store would. Counted, not asserted: both orderings exist
+    // in this memo, computed from the same facet counts in the same pass.
+    const moved = ordered.filter((f, i) => defaultOrdered[i]?.key !== f.key).length;
+
     return {
       railFacets: [
         ...answered.map((facet) => ({ facet, answered: true, badge: null as string | null })),
@@ -400,9 +479,14 @@ export const ProductListingPage: React.FC = () => {
             i === 0 ? (intentStillLeading ? 'ML RANKED' : 'NEXT BEST') : i === 1 && intentStillLeading ? 'ML RANKED' : null,
         })),
       ],
-      defaultRailKeys: [...answered.map((f) => f.key), ...orderAt(1).map((f) => f.key)],
+      defaultRailKeys: defaultKeys,
+      railMix: t,
+      railMoved: moved,
     };
   }, [sel, isPersonalizationOn, intentPrediction, facetCounts]);
+
+  /** The question the rail has decided to ask next, if there is one left. */
+  const nextQuestion = railFacets.find((r) => !r.answered)?.facet.label ?? null;
 
   /* ------------------------------------------------- the effort ledger -- */
 
@@ -428,11 +512,21 @@ export const ProductListingPage: React.FC = () => {
    *   - it fires once per department, tracked in a ref, so clearing the chip
    *     clears it for good. A filter that reapplies itself is not a
    *     convenience, it is a fight.
+   *
+   * A fourth guard arrived with search: gift intent. "Something for my son" is
+   * the shopper telling you the purchase is not for them, and prefilling their
+   * own size onto it is the exact failure that makes personalization feel
+   * creepy rather than useful. The query engine emits the gift trait as its own
+   * node for precisely this reason - so a surface can switch a piece of
+   * personalization OFF on the strength of it.
    */
   const prefilledFor = useRef<Set<string>>(new Set());
 
+  const giftIntent = searchResult?.interpretation.giftIntent ?? false;
+
   useEffect(() => {
     if (!isPersonalizationOn) return;
+    if (giftIntent) return;
     const dept = sel.department.length === 1 ? sel.department[0] : null;
     if (!dept || prefilledFor.current.has(dept)) return;
     if (sel.size.length > 0) return;
@@ -458,7 +552,7 @@ export const ProductListingPage: React.FC = () => {
       })
     );
     recordEvent(`Size ${est.size} prefilled from profile`, { pageType: 'Filter', filterApplied: `size=${est.size}` });
-  }, [isPersonalizationOn, sel.department, sel.size, visitorProfile, facetCounts, beat, lastEventId]);
+  }, [isPersonalizationOn, giftIntent, sel.department, sel.size, visitorProfile, facetCounts, beat, lastEventId]);
 
   const toggleValue = (key: FacetKey, value: string) => {
     setSel((s) => {
@@ -552,7 +646,7 @@ export const ProductListingPage: React.FC = () => {
     // Four cards across, twenty-four to a page. The saving worth having here is
     // the one that crosses a page boundary, and rows are the unit that makes
     // that visible without claiming a shopper feels every slot.
-    if (isPersonalizationOn && sortBy === 'featured') {
+    if (isPersonalizationOn && sortBy === 'recommended') {
       recordEffort(
         rankMove({
           id: `plp:grid:${beat}:${p.id}`,
@@ -724,7 +818,11 @@ export const ProductListingPage: React.FC = () => {
             Home
           </button>
           <ChevronRight className="h-3 w-3 text-slate-300" />
-          {selectedLeague || shopTeamId ? (
+          {searchResult ? (
+            <span className="font-bold text-slate-800 truncate max-w-[18rem]">
+              Search · “{searchResult.interpretation.raw}”
+            </span>
+          ) : selectedLeague || shopTeamId ? (
             <span className="cursor-default">{selectedLeague ?? TEAM_BY_ID[shopTeamId!].league}</span>
           ) : (
             <span className="font-bold text-slate-800">All Gear</span>
@@ -744,7 +842,21 @@ export const ProductListingPage: React.FC = () => {
         </nav>
       </div>
 
+      {/* A search replaces the team hero band. Dressing a query result in a club's
+          colours and headline would name a team the shopper did not ask for and
+          put a catalog-wide count beside it. */}
+      {searchResult && (
+        <SearchUnderstanding
+          result={searchResult}
+          onClear={() => {
+            clearSearch();
+            recordEvent('Cleared search', { pageType: 'Search' });
+          }}
+        />
+      )}
+
       {/* Team hero band, dressed in the team's own colours */}
+      {!searchResult && (
       <div className="max-w-[1400px] mx-auto px-5 pt-3">
         <div
           className="rounded-xl px-5 py-4 text-white flex items-center justify-between gap-4 shadow-sm"
@@ -804,6 +916,7 @@ export const ProductListingPage: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       <div className="max-w-[1400px] mx-auto px-5 py-4 flex gap-6 items-start">
         {/* ---------------- Facet rail ---------------- */}
@@ -820,20 +933,48 @@ export const ProductListingPage: React.FC = () => {
             )}
           </div>
 
-          {/* The caption has to move with the rail. Early on the order really is
-              the intent model's; three answers in it is the shopping funnel's,
-              and a banner still crediting the model at that point would be
-              claiming something the code stopped doing. */}
+          {/* THE RAIL RE-SEQUENCES ITSELF, and this caption is where it says so.
+              Early on the order really is the intent model's; three answers in
+              it is the shopping funnel's, and a banner still crediting the model
+              at that point would be claiming something the code stopped doing.
+              The mix bar below is that handover, drawn rather than described. */}
           {isPersonalizationOn && (
-            <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5 flex items-start gap-1.5">
-              <Sparkles className="h-3 w-3 text-emerald-600 shrink-0 mt-0.5" />
-              <span className="text-[10px] text-emerald-900 leading-snug">
-                {answeredCount === 0
-                  ? 'Filter order and the values inside them are ranked by predicted intent.'
-                  : answeredCount < 3
-                    ? 'Re-ordered around your selections. Values are still ranked by predicted intent.'
-                    : 'Enough is known about this basket that the order now follows the funnel, not the model.'}
-              </span>
+            <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-2">
+              <div className="flex items-start gap-1.5">
+                <Sparkles className="h-3 w-3 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-emerald-900 leading-snug">
+                    {nextQuestion
+                      ? `Next best question: ${nextQuestion}`
+                      : 'Every question has been answered.'}
+                  </p>
+                  <p className="text-[9.5px] text-emerald-800/90 leading-snug mt-0.5">
+                    {answeredCount === 0
+                      ? 'Order and the values inside each group are ranked by predicted intent.'
+                      : answeredCount < 3
+                        ? 'Re-sequenced around your selections. Values are still ranked by predicted intent.'
+                        : 'Enough is known about this basket that the order now follows the funnel, not the model.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Who is deciding the order, right now. */}
+              <div className="mt-1.5 pt-1.5 border-t border-emerald-200">
+                <div className="flex items-center justify-between text-[8.5px] font-extrabold uppercase tracking-[0.1em] text-emerald-700">
+                  <span>Model</span>
+                  <span>Funnel</span>
+                </div>
+                <div className="mt-0.5 h-1 w-full rounded-full bg-emerald-200 overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-600 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.round((1 - railMix) * 100)}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-[9px] font-mono text-emerald-700/80 tabular-nums">
+                  t = {railMix.toFixed(2)} · {answeredCount} answered
+                  {railMoved > 0 && ` · ${railMoved} group${railMoved === 1 ? '' : 's'} re-sequenced`}
+                </p>
+              </div>
             </div>
           )}
 
@@ -881,12 +1022,118 @@ export const ProductListingPage: React.FC = () => {
                 {SORTS.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.label}
-                    {s.id === 'featured' && isPersonalizationOn ? ' (personalized)' : ''}
+                    {s.id === 'recommended' && isPersonalizationOn ? ' (model-ranked)' : ''}
                   </option>
                 ))}
               </select>
             </label>
           </div>
+
+          {/* -------- Why this order. The sort control names a model output, so
+                       the model output has to be inspectable from where it is
+                       named rather than only from the panel. -------- */}
+          {sortBy === 'recommended' && (
+            <div className="pt-2.5">
+              <button
+                onClick={() => setWhyOpen((v) => !v)}
+                className={`w-full flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
+                  isPersonalizationOn
+                    ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100/70'
+                    : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                }`}
+              >
+                {isPersonalizationOn ? (
+                  <Sparkles className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                ) : (
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                )}
+                <span
+                  className={`text-[11px] font-bold ${isPersonalizationOn ? 'text-emerald-900' : 'text-slate-700'}`}
+                >
+                  {!isPersonalizationOn
+                    ? 'Recommended is plain popularity right now — personalization is off'
+                    : searchResult
+                      ? 'This order is relevance times profile affinity'
+                      : recommended && recommended.moved.length > 0
+                        ? `${recommended.moved.length} of the top ${recommended.items.length} moved from where popularity alone would have put them`
+                        : 'Popularity, reweighted by predicted intent'}
+                </span>
+                <span className="flex-1" />
+                <ChevronDown
+                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${whyOpen ? 'rotate-180' : ''} ${
+                    isPersonalizationOn ? 'text-emerald-600' : 'text-slate-400'
+                  }`}
+                />
+              </button>
+
+              {whyOpen && (
+                <div className="mt-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                  <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+                    Scorer
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10.5px] text-slate-700 break-words">
+                    {searchResult
+                      ? 'score = (relevance + soft credit for relaxed constraints) x (1 + 1.4 x P(team) + 0.8 x P(department) + 1.6 x P(player))'
+                      : RECOMMENDED_FORMULA}
+                  </div>
+
+                  {!searchResult && (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                      {recommended?.weights.map((w) => (
+                        <div key={w.label} className="text-[10px]">
+                          <span className="font-mono font-bold tabular-nums text-slate-900">
+                            {w.weight.toFixed(1)}
+                          </span>{' '}
+                          <span className="font-semibold text-slate-700">{w.label}</span>
+                          <span className="text-slate-400"> — {w.note}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* The paired measurement. Not "we personalized this" - the
+                      positions each product would have held either way. */}
+                  {!searchResult && isPersonalizationOn && recommended && recommended.moved.length > 0 && (
+                    <>
+                      <div className="mt-2.5 text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-400">
+                        Moved against the popularity default
+                      </div>
+                      <div className="mt-1 space-y-0.5">
+                        {recommended.moved.slice(0, 5).map((m) => (
+                          <div key={m.productId} className="flex items-center gap-1.5 text-[10.5px]">
+                            <span
+                              className={`font-mono font-bold tabular-nums shrink-0 ${
+                                m.delta > 0 ? 'text-emerald-600' : 'text-slate-400'
+                              }`}
+                            >
+                              {m.from}→{m.to}
+                            </span>
+                            <span className="truncate text-slate-700">{m.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {searchResult && (
+                    <p className="mt-2 text-[10px] text-slate-500 leading-snug">
+                      Relevance comes from the query, affinity from the profile, and the two multiply
+                      rather than add — so a product the shopper would love that does not answer the
+                      question still cannot outrank one that does.
+                      {searchResult.interpretation.giftIntent &&
+                        ' The player term is dropped entirely here, because this was read as a gift.'}
+                    </p>
+                  )}
+
+                  <p className="mt-2 text-[9.5px] text-slate-400 leading-snug border-t border-slate-100 pt-1.5">
+                    Ranking only. Nothing on this page filters a product out on the model's say-so —
+                    membership in the result set is decided by the shopper's filters and their query,
+                    and by nothing else.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Applied filter chips */}
           {appliedChips.length > 0 && (
@@ -929,7 +1176,7 @@ export const ProductListingPage: React.FC = () => {
                     // and only at the top of the first page where the claim is
                     // actually true.
                     badgeText={
-                      isPersonalizationOn && sortBy === 'featured' && i < 3 ? 'PICKED FOR YOU' : undefined
+                      isPersonalizationOn && sortBy === 'recommended' && i < 3 ? 'PICKED FOR YOU' : undefined
                     }
                     badgeType="personalized"
                   />

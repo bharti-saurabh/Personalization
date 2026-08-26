@@ -10,6 +10,7 @@ import {
   DecisionTrace,
   TeamId,
   League,
+  Department,
 } from '../types';
 import { IntentResult } from '../ml/intent';
 import { SimilarityResult } from '../ml/similarity';
@@ -17,8 +18,11 @@ import { ComplementResult } from '../ml/complement';
 import { JournalBeat, MarketBeat, buildBeat } from '../ml/journal';
 import { buildDecisions } from '../ml/decisions';
 import type { DecisionEntry } from '../ml/decisions';
-import { buildLedger } from '../ml/effort';
+import { buildLedger, saving } from '../ml/effort';
 import type { EffortEntry, EffortLedger } from '../ml/effort';
+import { interpretQuery, searchCatalog } from '../ml/query';
+import type { SearchResult } from '../ml/query';
+import type { RankingExplanation } from '../ml/ranking';
 import { buildScenarios, findAnchorProduct } from '../data/scenarios';
 import { getDataset, fireMarketEvent, resetMarket, subscribeToWorld } from '../sim/dataset';
 import {
@@ -140,6 +144,28 @@ interface AppContextType {
    */
   recordEffort: (entry: EffortEntry | null) => void;
 
+  /* -------------------------------------------------------------- search -- */
+
+  /**
+   * The live search, or null when the shopper is browsing rather than searching.
+   *
+   * Held in context rather than in the header because the search box and the
+   * results page are two components and they must never disagree about what was
+   * asked. The header writes it; the listing page reads it as its result pool.
+   */
+  searchResult: SearchResult | null;
+  /** Interprets, retrieves, records the event and lands on the results page. */
+  runSearch: (raw: string) => void;
+  clearSearch: () => void;
+
+  /**
+   * The most recent Recommended-sort explanation, published by whichever
+   * surface last ran it. Read-only from the panel's point of view - an
+   * explanation that can change an outcome is not an explanation.
+   */
+  lastRanking: RankingExplanation | null;
+  publishRanking: (explanation: RankingExplanation) => void;
+
   /* ------------------------------------------------------- market events -- */
 
   /** The events the demo can fire, in the order the deck presents them. */
@@ -248,6 +274,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setActiveTeamOverride(null);
       setActiveDeptFilter(null);
       setActiveLeagueFilter(null);
+      // A query belongs to the shopper who typed it. Carrying it across a
+      // persona switch would show the new shopper a results page they never
+      // asked for, ranked against a profile that is no longer theirs.
+      setSearchResult(null);
+      pendingSearch.current = null;
+      setLastRanking(null);
       // A new persona is a new session, so the story starts over. Clearing the
       // cursor as well makes the next beat a fresh "session opened" read rather
       // than a delta against the previous shopper's posterior.
@@ -414,6 +446,114 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const effortLedger = React.useMemo<EffortLedger>(() => buildLedger(effortEntries), [effortEntries]);
+
+  /* --------------------------------------------------------------- search -- */
+
+  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
+  /**
+   * The search waiting to be written into the decision journal.
+   *
+   * The beat recorder is keyed on the newest user event, and `runSearch` emits
+   * one. Handing the search across through a ref rather than through state
+   * means the beat is built in the same pass as the event that caused it, with
+   * no second render in between where a beat could be written without its query.
+   */
+  const pendingSearch = useRef<SearchResult | null>(null);
+
+  const [lastRanking, setLastRanking] = useState<RankingExplanation | null>(null);
+  const publishRanking = React.useCallback((explanation: RankingExplanation) => {
+    setLastRanking((prev) => {
+      // Cheap identity check so a re-render with the same order does not
+      // restart every animation in the panel.
+      if (
+        prev &&
+        prev.active === explanation.active &&
+        prev.considered === explanation.considered &&
+        prev.items.length === explanation.items.length &&
+        prev.items.every((it, i) => it.product.id === explanation.items[i]?.product.id)
+      ) {
+        return prev;
+      }
+      return explanation;
+    });
+  }, []);
+
+  const clearSearch = React.useCallback(() => {
+    setSearchResult(null);
+    pendingSearch.current = null;
+  }, []);
+
+  /**
+   * Runs a typed query and lands on the results page.
+   *
+   * WHY THE EVENT CARRIES THE INTERPRETATION AND NOT THE QUERY STRING. The
+   * profile fold reads `team`, `department` and `league` off an event; a raw
+   * string moves nothing. Search is the one surface where the shopper states
+   * their intent in words, so throwing that away at the profile boundary would
+   * make the most explicit signal in the session the least useful one.
+   *
+   * Only nodes that clear a confidence floor are taught to the profile. A
+   * league inferred from a club inferred from a surname sits at 0.25, and
+   * writing that into the fold with the same weight as a click would teach the
+   * profile a chain of guesses as though it were an observation.
+   */
+  const runSearch = (raw: string) => {
+    const query = raw.trim();
+    if (!query) return;
+
+    const interpretation = interpretQuery(query);
+    const result = searchCatalog(products, interpretation, {
+      profile: profileStore.profile,
+      personalized: isPersonalizationOn,
+    });
+
+    setSearchResult(result);
+    pendingSearch.current = result;
+
+    // A search replaces the browse context rather than narrowing it: carrying a
+    // stale team filter into a query for a different club would silently return
+    // nothing and blame the query for it.
+    setActiveTeamOverride(null);
+    setActiveDeptFilter(null);
+    setActiveLeagueFilter(null);
+    setNavigationTab('experience');
+    setStorefrontPage('plp');
+
+    const TEACH_FLOOR = 0.6;
+    const strongest = (kind: string) =>
+      result.interpretation.nodes
+        .filter((n) => n.kind === kind && n.confidence >= TEACH_FLOOR)
+        .sort((a, b) => b.confidence - a.confidence)[0]?.value;
+
+    // The rescue is a dead end that did not happen. It is the only search entry
+    // the ledger takes, and it is taken only when the un-personalized store
+    // would genuinely have shown an empty page - not on every search.
+    if (isPersonalizationOn && result.rescue) {
+      recordEffort(
+        saving({
+          id: `search:rescue:${query.toLowerCase()}`,
+          eventId: null,
+          page: 'plp',
+          surface: 'Search results',
+          kind: 'dead_end',
+          count: 1,
+          label: `Zero-result page avoided for "${query}"`,
+          detail:
+            result.rescue.kind === 'profile'
+              ? `nothing in the query mapped onto the catalog; ${result.matched.length} products ranked by profile affinity instead`
+              : `${result.rescue.steps.length} constraint(s) relaxed to reach ${result.matched.length} products`,
+        })
+      );
+    }
+
+    recordEvent(`Searched: "${query}"`, {
+      pageType: 'Search',
+      team: strongest('team') as TeamId | undefined,
+      department: strongest('department') as Department | undefined,
+      league: strongest('league') as League | undefined,
+      filterApplied: result.constraints.map((c) => c.label).join('; ') || undefined,
+    });
+  };
 
   const similarityMatches = React.useMemo(
     () => runSimilarityEngine(selectedProduct, products, 4),
@@ -587,7 +727,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       page: L.page,
       anchor: L.anchor,
       personalizationOn: L.personalizationOn,
+      // Consumed, not read: a search explains exactly one beat, and leaving it
+      // set would attach the query to whatever the shopper clicked next.
+      search: pendingSearch.current ?? undefined,
     });
+    pendingSearch.current = null;
 
     prevIntentRef.current = L.intent;
     // Capped because this is a demo session, not an audit log - forty beats is
@@ -714,6 +858,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         decisions,
         effortLedger,
         recordEffort,
+        searchResult,
+        runSearch,
+        clearSearch,
+        lastRanking,
+        publishRanking,
         eventDeck: EVENT_DECK,
         fireEvent,
         marketRebuilding,
