@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
 import { ProductImage } from './ProductImage';
@@ -20,6 +20,7 @@ import {
 import { SimilarityMatch, ComplementMatch } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
 import { TeamCrest, LeagueBadge } from '../brand/Identity';
+import { saving } from '../../ml/effort';
 
 export const ProductDetailPage: React.FC = () => {
   const {
@@ -34,6 +35,8 @@ export const ProductDetailPage: React.FC = () => {
     activeExplainedProduct,
     setActiveExplainedProduct,
     isPersonalizationOn,
+    recordEffort,
+    userEvents,
   } = useApp();
 
   const [selectedSize, setSelectedSize] = useState<string>('L');
@@ -92,6 +95,46 @@ export const ProductDetailPage: React.FC = () => {
       explanation: 'Generic storewide featured catalog item.',
     }));
   }, [isPersonalizationOn, complementMatches, products, selectedProduct]);
+
+  /**
+   * The slots the complement engine refused to fill.
+   *
+   * This is the one surface where suppression genuinely removes impressions
+   * rather than swapping them. The un-personalized rail always serves four -
+   * it is a price sort over the catalog and it can always find four. The
+   * personalized rail serves only what survives cross-department, in-stock,
+   * team-consistency and a co-order probability above zero, and when the graph
+   * has nothing to say it comes back with two, or one, and renders that many.
+   *
+   * The difference is countable off the same screen, against the same anchor,
+   * in the same render - the pairing ml/effort.ts asks for. What is being
+   * claimed is narrow and worth stating: not that the withheld slots would have
+   * been bad, but that no evidence stood behind them, which is why they are
+   * priced at three seconds of attention and no click.
+   */
+  const RAIL_SLOTS = 4;
+  useEffect(() => {
+    if (!isPersonalizationOn) return;
+    const withheld = RAIL_SLOTS - complementMatches.length;
+    if (withheld <= 0) return;
+    recordEffort(
+      saving({
+        // Keyed on the ANCHOR alone, not on the beat. The rail for one product
+        // is one decision, and it does not become a second one because an
+        // unrelated event elsewhere on the page bumped the event count.
+        id: `pdp:complement-gate:${selectedProduct.id}`,
+        eventId: userEvents[0]?.id ?? null,
+        page: 'pdp',
+        surface: 'Complete the look',
+        kind: 'suppressed_impression',
+        count: withheld,
+        label: `Withheld ${withheld} of ${RAIL_SLOTS} complement slots`,
+        detail:
+          `the co-order graph had evidence for ${complementMatches.length}; ` +
+          `the un-personalized rail fills all ${RAIL_SLOTS} from a price sort regardless`,
+      })
+    );
+  }, [isPersonalizationOn, complementMatches, selectedProduct, userEvents, recordEffort]);
 
   const handleProductSelect = (p: typeof selectedProduct) => {
     setSelectedProduct(p);

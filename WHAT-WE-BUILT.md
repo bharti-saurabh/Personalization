@@ -80,14 +80,14 @@ on screen, and what changed since the last event. Three tabs — **Profile** (wh
 system currently believes about this shopper, every field with its confidence, source and
 decay constant), **Decisions** (the delta stream: triggering event, models that ran, fields
 written, surfaces re-ranked, expandable to the full feature vector), and **Experience**
-(the effort ledger). Every Decisions entry reads mechanism, then consequence, then number —
+(the per-session effort ledger, §8.3). Every Decisions entry reads mechanism, then consequence, then number —
 no entry ends on a posterior.
 
 ### The deep dives (7 screens)
 
 | Screen | What it holds |
 | --- | --- |
-| **ON vs OFF Comparison** | The same storefront side by side, personalization on and off |
+| **Twin Store Race** | Two grids, same shopper, same seed, same target — stepped side by side (§8.1) |
 | **Customer Journey** | The session as a timeline: every event, every re-scoring, every shift in the posterior |
 | **Model Intelligence** | The three engines opened up — features, weights, decay constants, thresholds |
 | **Model Evidence** | The offline evaluation results, labelled as recovery of the simulated process |
@@ -422,7 +422,163 @@ clock the demand multipliers are exactly 1 and the event pass returns its input 
 
 ---
 
-## 8. Offline results
+## 8. Effort, not money
+
+Every claim in the previous seven sections is about accuracy. Accuracy is not the argument
+a shopper cares about, and it is not the argument a room full of executives can check. So
+there is one screen and one harness that measure something else entirely: **how much work
+the shopper had to do**.
+
+Nothing in this section produces a currency figure, an ROI number or a revenue lift. That
+is a deliberate deletion, not an omission. The screen that now holds the twin store race
+used to hold an illustrative funnel that ended on `Average Order Value $88 → $104`, and it
+was removed rather than relocated. A made-up revenue figure sitting next to a page of real
+arithmetic devalues the arithmetic — it is the number a client repeats to someone who will
+check it, and it is the one number here nobody could.
+
+### 8.1 The twin store race
+
+**Deep Dive → Twin Store Race.** Two storefronts side by side. Left is ranked by the intent
+engine. Right is ranked by sales volume, which is genuinely what this storefront serves with
+personalization switched off. Same shopper, same seed, same 798-product catalog.
+
+The shopper's true intent is stated in plain words before anything moves — *"wants a men's
+Eagles jersey, size XL, under $170"* — and it is read off their **held-out purchase**, which
+no engine on either side can see. Naming the target first is what makes the race legible: a
+grid filling up means nothing until you already know what you are looking for.
+
+A **Step** control advances both grids by one shopper action, driven by the choice model
+from `src/sim/choice.ts`. At each slot the shopper examines or does not, clicks or scrolls
+past, and eventually adds or abandons. Both arms walk the same **pre-drawn random numbers**,
+so the shopper's luck is identical on both sides and the only variable in the whole race is
+the ordering.
+
+Live counters above each pane: steps taken, items seen before the first genuinely relevant
+one, dead ends, scroll depth, and whether the target was reached and on which step. They are
+derived from the trace rather than accumulated, so scrubbing back gives the same numbers as
+stepping forward.
+
+**The race is not rigged.** Five shoppers are on the strip, chosen to span the outcomes, and
+two of them are races personalization loses:
+
+| Shopper | Confidence | Personalized | Popularity | Reading |
+|---|---|---|---|---|
+| `cust-3859` | 78% | step 3 | step 20 | Confident and correct — the case it is built for |
+| `cust-1474` | 84% | step 45 | **step 1** | **Upset.** Confident and wrong; the target was a bestseller |
+| `cust-82` | 79% | never | **step 3** | **Upset.** The personalized grid never surfaces it at all |
+| `cust-2260` | 28% | step 1 | step 39 | Below the gate, and the ranking was right anyway |
+| `cust-10` | 22% | step 2 | never | Below the gate; only the personalized grid ever finds it |
+
+The upset label is computed from the traces on screen, not written by hand, and the
+population rate is on the record below: the control arm reaches the target first in about
+5% of races. A race the personalized side always wins is a race nobody believes.
+
+### 8.2 Population effort metrics
+
+`npm run sim:effort`. Its own script, deliberately separate from `sim:eval` so the accuracy
+harness does not get slower. Paired arms, same shoppers and same seeds in both, over 6,000
+simulated shoppers of whom 3,040 have a held-out purchase to aim at. Bootstrap 95%
+intervals, 2,000 iterations, resampled **over shoppers rather than sessions** because the
+shopper is the pairing unit.
+
+```
+metric                                  person.  popular.     diff        95% interval      n
+Steps to first relevant item                1.0       5.0     -4.0        -5.0 to -3.0    129  <-
+Steps to target reached                     7.5       5.5     +2.0       -3.0 to +13.0     40   ~
+Sessions reaching the target              13.6%      5.9%    +7.7%      +6.4% to +9.2%   3040  <-
+Dead ends per session                      0.92      1.09    -0.17      -0.20 to -0.14   3040  <-
+Items seen before first relevant            0.0       3.0     -3.0        -4.0 to -2.0    129  <-
+Catalog surfaced across population        96.2%    100.0%    -3.8%      -4.9% to -3.8%   3040  !!
+
+relevant seen at all: personalized 17.5%   popularity 18.6%   both 4.2%
+impression concentration: personalized 36.1%   popularity 14.6%
+gate: withheld 480/3040 (15.8%); correctly withheld 340 (11.2% of all, 70.8% of withheld)
+upsets: control arm reached the target sooner in 5.3% of races
+```
+
+`<-` personalized ahead · `!!` **control ahead** · `~` not separated from zero.
+
+**These are counts of shopper effort in a simulated world**, labelled exactly as the offline
+accuracy metrics in §9 are labelled. They are not measurements of human beings.
+
+Three rows need reading together rather than quoting alone, and the CLI says so on screen:
+
+- **Steps to target (`~`)** conditions on *both* arms reaching, which selects the easy
+  targets. n falls to 40, the interval is wide, and the control looks level — while
+  reaching the target far less often, which is the row above it.
+- **Catalog surfaced (`!!`)** goes against personalization and stays in the table. It is
+  also a metric that saturates at population scale: union-of-everything-shown reaches 100%
+  for any ranker given enough shoppers. **Impression concentration** is published beside it
+  as the reading that carries the actual cost — personalization concentrates 36% of
+  impressions on its top decile against popularity's 15%.
+- **The confidence gate** row is a single-arm diagnostic, not a paired comparison. It
+  withheld on 15.8% of sessions and was right to withhold on 70.8% of those.
+
+### 8.3 The per-session effort ledger
+
+**Intelligence panel → Experience.** The tab shipped empty and said so. It is instrumented
+now, and every row in it was emitted by a storefront surface that actually made the decision
+it describes:
+
+| Surface | What it records |
+|---|---|
+| Home category rail | `Jerseys` — position 9 unpersonalized → position 2 personalized |
+| Home team rail, picked-for-you rail | the same, against market size and against sales rank |
+| PLP facet rail | where a facet sat, against where the funnel alone would have put it |
+| PLP result grid | where the clicked product sat, against sales rank, counted in rows |
+| PLP size facet | prefilled size L from the profile — one facet interaction avoided |
+| PDP *Complete the look* | withheld 2 of 4 slots — the co-order graph had evidence for two |
+
+Two design decisions are what make the ledger checkable rather than assertable.
+
+**Rank moves are recorded on click, not on render.** On render the page only knows it
+re-ordered a rail, so any saving it claimed would be a claim about its own prediction —
+"we put what we predicted at the top" — which is true by construction and worth nothing. On
+click it knows what the shopper actually came for, because they just took it.
+
+**The session-end total is paired, not replayed.** The obvious way to answer *"what did
+personalization save this session"* is to re-run the session with the switch off and diff
+the two. We do not, and not because it is hard: a replayed session diverges at the first
+click, and by step four the two sessions are not comparable. Instead every entry is paired
+**at the moment of the decision** — both orderings computed from the same inputs in the same
+render. Summed, those pairs *are* the session replayed unpersonalized, decision by decision,
+with nothing to hand-wave over. The honest cost of that choice: it counts only decisions the
+shopper actually reached, so a session that ended on the home page reports one decision, not
+an extrapolated ten.
+
+**Entries can go the other way.** When the model reads a shopper wrong it pushes their
+target *down* the rail, and `rankMove` returns that as effort **incurred**, in the same
+units, on the same ledger. A ledger that can only count savings is an advert.
+
+What is real and what is not, stated on the tab itself: the **counts** are real; the
+**conversion to seconds** is a simulated benchmark and stays marked as one, because a click
+is countable and the seconds it costs a person are not something this demo has measured.
+
+`src/ml/effort.test.ts` asserts the four properties the surfaces depend on: a decision that
+moved nothing produces no row, a decision that went the wrong way produces a cost, positions
+are counted as rows of scrolling rather than raw slots, and the un-personalized column is
+exactly the sum of the paired diffs.
+
+### 8.4 What building it caught
+
+The first version of the harness had the control arm winning almost every row. That is a
+signal to audit the setup, not a finding to publish, and three separate methodological bugs
+came out of the audit — each now documented in-code at the site of the decision:
+
+1. **The candidate pool was the focus club's assortment.** That models a shopper who has
+   *already* navigated to their club's page, which hands the control arm the single hardest
+   thing personalization has to guess. The pool is the whole catalog now.
+2. **First-relevant required a click**, which collapsed n to 54 and turned a question about
+   the grid into a question about the click model. It fires on examination now; the target
+   still requires a click, and the asymmetry is documented.
+3. **`seenBeforeFirstRelevant` fell back to total seen** when nothing relevant was found,
+   silently mixing "seen before finding it" with "seen, never found it" — which made that
+   row contradict the row above it. It is `number | null` now, and the denominators are
+   published so the conditioning is visible.
+
+---
+
+## 9. Offline results
 
 Run `npm run sim:eval`.
 
@@ -515,7 +671,7 @@ accuracy.**
 
 ---
 
-## 9. How it is built
+## 10. How it is built
 
 React 19 + TypeScript (strict) + Tailwind CSS 4 + Vite 6. ~11,300 lines. No backend, no
 API key, no network call at runtime.
@@ -564,11 +720,11 @@ our instrumentation of it.
 
 ---
 
-## 10. Who this is for
+## 11. Who this is for
 
 | Audience | What to show them |
 | --- | --- |
-| **Client leadership** | The storefront with the ON/OFF switch, the shopper-scenario pills, and the ON vs OFF Comparison screen. Five minutes, no jargon. |
+| **Client leadership** | The storefront with the ON/OFF switch, the shopper-scenario pills, and and the Twin Store Race. Five minutes, no jargon, no ROI slide. |
 | **Client data science / engineering** | Model Intelligence, the Recommendation Lab, Model Evidence, and System Architecture. Invite them to try to break the Lab. |
 | **Internal (Straive)** | A reusable capability asset. The `sim/` and `ml/` layers are client-agnostic; the taxonomy is one file. |
 
@@ -577,7 +733,7 @@ they do (Intent, Similarity, Complement) rather than for any product.
 
 ---
 
-## 11. What it deliberately does not do
+## 12. What it deliberately does not do
 
 - **No ROI calculator.** There was one; it was deleted. It was the only screen with no
   model behind it, and a made-up revenue figure next to nine screens of real arithmetic
@@ -590,7 +746,7 @@ they do (Intent, Similarity, Complement) rather than for any product.
 
 ---
 
-## 12. Where it goes next
+## 13. Where it goes next
 
 The prototype is complete as a prototype. Turning it into a system means, in rough order:
 

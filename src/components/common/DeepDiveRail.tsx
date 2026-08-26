@@ -46,8 +46,8 @@ const GROUPS: { title: string; items: DeepDive[] }[] = [
     items: [
       {
         id: 'comparison',
-        label: 'ON vs OFF Comparison',
-        blurb: 'Same shopper, same catalog, personalization disabled on one side',
+        label: 'Twin Store Race',
+        blurb: 'Same shopper, same seed, same target - step both grids and count the effort',
         icon: <Columns2 className="h-4 w-4" />,
         badge: 'A/B',
       },

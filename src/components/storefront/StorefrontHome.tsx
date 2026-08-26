@@ -6,6 +6,7 @@ import { Sparkles, ArrowRight, TrendingUp, ChevronLeft, ChevronRight } from 'luc
 import { TeamId, Department } from '../../types';
 import { TEAM_IDS, TEAM_BY_ID, DEPARTMENT_IDS } from '../../sim/taxonomy';
 import { TeamCrest, LeagueBadge, DeptGlyph } from '../brand/Identity';
+import { rankMove } from '../../ml/effort';
 
 export const StorefrontHome: React.FC = () => {
   const {
@@ -19,6 +20,8 @@ export const StorefrontHome: React.FC = () => {
     activeDeptFilter,
     setActiveDeptFilter,
     recordEvent,
+    recordEffort,
+    userEvents,
   } = useApp();
 
   // Primary predicted team or fallback
@@ -102,7 +105,50 @@ export const StorefrontHome: React.FC = () => {
     return [...from].sort((a, b) => b.popularity - a.popularity)[0];
   }, [isPersonalizationOn, heroTeamProducts, globalBestSellers, intentPrediction]);
 
+  /*
+   * THE EFFORT LEDGER IS WRITTEN ON CLICK, NOT ON RENDER, and the reason is
+   * that a saving needs a subject.
+   *
+   * On render, all this page knows is that it re-ordered three rails. It does
+   * not know what the shopper came for, so any saving it claimed would be a
+   * claim about the model's own prediction - "we put what we predicted at the
+   * top", which is true by construction and worth nothing.
+   *
+   * On click it knows exactly what they came for, because they just took it.
+   * Where that thing sat in the personalized ordering is on screen; where the
+   * same thing sits in the merchandised default is computed right here from the
+   * same catalog. The difference is a fact about this shopper, and it can be
+   * checked by anyone who wants to count the alphabetical list themselves.
+   *
+   * Nothing is recorded with personalization off: the two orderings are the
+   * same list and the diff is structurally zero.
+   */
+  const beat = userEvents.length;
+  const lastEventId = userEvents[0]?.id ?? null;
+
+  const logRankMove = (surface: string, subject: string, personalized: number, dflt: number, perRow = 1) => {
+    if (!isPersonalizationOn) return;
+    recordEffort(
+      rankMove({
+        id: `home:${surface}:${beat}:${subject}`,
+        eventId: lastEventId,
+        page: 'home',
+        surface,
+        subject,
+        personalizedPosition: personalized,
+        defaultPosition: dflt,
+        perRow,
+      })
+    );
+  };
+
   const handleTeamClick = (team: TeamId) => {
+    logRankMove(
+      'Your teams rail',
+      `${team} shop`,
+      teamRows.findIndex((r) => r.team === team) + 1,
+      popularTeams.indexOf(team) + 1
+    );
     setActiveTeamOverride(team);
     // The team has to travel on the event, not just into the override, or the
     // journal shows a click that visibly changed the page while claiming the
@@ -111,6 +157,16 @@ export const StorefrontHome: React.FC = () => {
   };
 
   const handleProductSelect = (p: (typeof products)[0]) => {
+    // Four cards fit across the rail, so positions are read as rail-flicks
+    // rather than as raw slots. Against the bestseller list the same product is
+    // usually a long way down, which is the whole point of the row.
+    logRankMove(
+      'Picked-for-you rail',
+      p.name,
+      personalizedCarouselProducts.findIndex((x) => x.id === p.id) + 1,
+      globalBestSellers.findIndex((x) => x.id === p.id) + 1,
+      4
+    );
     setSelectedProduct(p);
     setStorefrontPage('pdp');
     recordEvent(`Selected Homepage Product: ${p.name}`, {
@@ -308,6 +364,15 @@ export const StorefrontHome: React.FC = () => {
               <button
                 key={deptItem.department}
                 onClick={() => {
+                  // The ledger's cleanest row. Ten departments, alphabetical by
+                  // default; the shopper takes one, and the two positions are
+                  // both countable off the screen.
+                  logRankMove(
+                    'Category rail',
+                    deptItem.department,
+                    idx + 1,
+                    alphabeticalDepartments.indexOf(deptItem.department) + 1
+                  );
                   setActiveDeptFilter(deptItem.department);
                   setStorefrontPage('plp');
                   recordEvent(`Selected recommended department: ${deptItem.department}`, {

@@ -17,8 +17,8 @@ import { ComplementResult } from '../ml/complement';
 import { JournalBeat, MarketBeat, buildBeat } from '../ml/journal';
 import { buildDecisions } from '../ml/decisions';
 import type { DecisionEntry } from '../ml/decisions';
-import { emptyLedger } from '../ml/effort';
-import type { EffortLedger } from '../ml/effort';
+import { buildLedger } from '../ml/effort';
+import type { EffortEntry, EffortLedger } from '../ml/effort';
 import { buildScenarios, findAnchorProduct } from '../data/scenarios';
 import { getDataset, fireMarketEvent, resetMarket, subscribeToWorld } from '../sim/dataset';
 import {
@@ -131,6 +131,14 @@ interface AppContextType {
    * invented. See ml/effort.ts.
    */
   effortLedger: EffortLedger;
+  /**
+   * How a surface reports what a personalized decision saved, or cost.
+   *
+   * Takes null so a caller can pass `rankMove(...)` straight through - a
+   * decision that moved nothing returns null and should not become a row.
+   * Entries are deduped by id, so calling this from a render effect is safe.
+   */
+  recordEffort: (entry: EffortEntry | null) => void;
 
   /* ------------------------------------------------------- market events -- */
 
@@ -246,6 +254,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setJournal([]);
       loggedEventId.current = null;
       prevIntentRef.current = null;
+      // A new persona is a new session, so the effort account starts at zero
+      // too. Carrying the previous shopper's savings forward would make the
+      // ledger a running total across people, which it is not.
+      resetEffort();
       // Anchor each scenario on a representative generated product, resolved by
       // predicate rather than by id - catalog ids move with the generator seed.
       if (found.id === 'hot_market') {
@@ -377,12 +389,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   /**
-   * Empty, and honestly so. Populating this means instrumenting searches,
-   * filter flips, pagination and backtracks on the storefront itself, which is
-   * its own piece of work. A ledger filled with plausible invented numbers
-   * would read as evidence and would not be.
+   * The session's effort ledger, written by the storefront's own surfaces.
+   *
+   * IDs ARE THE DEDUPE KEY, and that is what makes this safe to call from a
+   * render effect. A surface emits the same id for the same decision - the home
+   * category rail on beat 4 is always `home:dept-rail:4` - so a re-render that
+   * recomputes the same ordering re-offers an entry that is already in the
+   * ledger and the recorder drops it. Without that, every hover on the panel
+   * would inflate the totals, and a counter that grows when nobody is shopping
+   * is a counter nobody will believe twice.
    */
-  const effortLedger = React.useMemo<EffortLedger>(() => emptyLedger(), []);
+  const [effortEntries, setEffortEntries] = useState<EffortEntry[]>([]);
+  const effortIds = useRef<Set<string>>(new Set());
+
+  const recordEffort = React.useCallback((entry: EffortEntry | null) => {
+    if (!entry || effortIds.current.has(entry.id)) return;
+    effortIds.current.add(entry.id);
+    setEffortEntries((prev) => [...prev, entry]);
+  }, []);
+
+  const resetEffort = React.useCallback(() => {
+    effortIds.current = new Set();
+    setEffortEntries([]);
+  }, []);
+
+  const effortLedger = React.useMemo<EffortLedger>(() => buildLedger(effortEntries), [effortEntries]);
 
   const similarityMatches = React.useMemo(
     () => runSimilarityEngine(selectedProduct, products, 4),
@@ -682,6 +713,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastDeltas: profileStore.lastDeltas,
         decisions,
         effortLedger,
+        recordEffort,
         eventDeck: EVENT_DECK,
         fireEvent,
         marketRebuilding,

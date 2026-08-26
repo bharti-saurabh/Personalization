@@ -42,7 +42,8 @@ Other scripts:
 | `npm run sim:inspect` | Dumps catalog and population statistics for sanity-checking the simulator |
 | `npm run sim:imagery` | Renders the procedural product artwork |
 | `npm run sim:market` | Fires a trade into the world and diffs it against the quiet world - the source of every market-event figure quoted in the docs |
-| `npm test` | Unit tests for `src/ml` and `src/sim`, including the market-event isolation checks |
+| `npm run sim:effort` | Paired counterfactual over the population - what personalization costs the shopper in STEPS, with bootstrap intervals. Kept out of `sim:eval` so the accuracy harness stays fast |
+| `npm test` | Unit tests for `src/ml` and `src/sim`, including the market-event isolation checks and the effort-ledger arithmetic |
 | `npm run lint` | `tsc --noEmit` |
 | `npm run build` | Production build (code-split, for a static host) |
 | `npm run build:single` | One self-contained HTML file in `dist-single/` - runs from `file://`, no server |
@@ -81,7 +82,8 @@ src/
                and behaviour model, seeded RNG, and the season clock that
                carries the calendar and the market-event log. Deterministic.
   ml/          The engines: intent, similarity, complement, shared embeddings,
-               and the offline evaluation harness.
+               the offline evaluation harness, the paired counterfactual that
+               measures shopper effort, and the session effort ledger.
   components/
     storefront/    The shopping experience
     intelligence/  Explanation, evidence, architecture and partnership screens

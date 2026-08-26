@@ -12,6 +12,7 @@
     "sim:inspect": "tsx scripts/inspect-dataset.ts",
     "sim:eval": "tsx scripts/evaluate.ts",
     "sim:market": "tsx scripts/probe-market.ts",
+    "sim:effort": "tsx scripts/effort.ts",
     "sim:imagery": "tsx scripts/render-imagery.tsx",
     "build:single": "node scripts/build-singlefile.mjs",
     "test": "tsx --test src/ml/*.test.ts src/sim/*.test.ts"

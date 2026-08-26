@@ -28,8 +28,8 @@ const PipelineTrace = lazy(() =>
 const RecommendationLab = lazy(() =>
   import('./components/intelligence/RecommendationLab').then((m) => ({ default: m.RecommendationLab }))
 );
-const PersonalizationComparison = lazy(() =>
-  import('./components/storefront/PersonalizationComparison').then((m) => ({ default: m.PersonalizationComparison }))
+const TwinStoreRace = lazy(() =>
+  import('./components/storefront/TwinStoreRace').then((m) => ({ default: m.TwinStoreRace }))
 );
 const ModelArchitecture = lazy(() =>
   import('./components/intelligence/ModelArchitecture').then((m) => ({ default: m.ModelArchitecture }))
@@ -80,7 +80,7 @@ function DeepDiveStage() {
       <div className="flex-1 overflow-y-auto">
         <Suspense fallback={<TabFallback />}>
           {navigationTab === 'journey' && <CustomerJourneyScreen />}
-          {navigationTab === 'comparison' && <PersonalizationComparison />}
+          {navigationTab === 'comparison' && <TwinStoreRace />}
           {navigationTab === 'model_intelligence' && <ModelIntelligence />}
           {navigationTab === 'model_evidence' && <ModelEvidence />}
           {navigationTab === 'pipeline' && <PipelineTrace />}

@@ -100,7 +100,7 @@ const BASKET_CONCENTRATION = 2.2;
  */
 const DEPT_OFF_FOCUS_GATE = 0.24;
 
-const SURFACE_DEPTH = 48;
+export const SURFACE_DEPTH = 48;
 
 /**
  * Concentration applied to popularity when ordering the grid.
@@ -111,10 +111,10 @@ const SURFACE_DEPTH = 48;
  * and tie-breaking that keep a real grid from being frozen. The hard sort is the
  * limiting case as this exponent goes to infinity.
  */
-const SURFACE_CONCENTRATION = 2.2;
+export const SURFACE_CONCENTRATION = 2.2;
 
 /** Off-team items placed in the grid, standing in for cross-sell rails. */
-const STRAY_SLOTS = 24;
+export const STRAY_SLOTS = 24;
 
 /* ------------------------------------------------------- calibration ------ */
 
@@ -289,7 +289,7 @@ function bumpSymmetric(matrix: CoMatrix, a: number, b: number, amount = 1): void
 }
 
 /** Index the catalog by team and by (team, department) for fast weighted sampling. */
-function buildBuckets(products: Product[]) {
+export function buildBuckets(products: Product[]) {
   const byTeam = new Map<TeamId, number[]>();
   const byTeamDept = new Map<string, number[]>();
 
@@ -369,7 +369,7 @@ function drawDeptAffinity(rng: Rng): Record<Department, number> {
  * `focusDept` enters the same way `focusTeam` does, and deliberately so - see
  * `simulateSession`.
  */
-function productAffinityScore(
+export function productAffinityScore(
   product: Product,
   customer: SyntheticCustomer,
   focusTeam: TeamId,

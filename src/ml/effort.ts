@@ -12,11 +12,35 @@
  * in opposite directions when personalization is working, and stapling them
  * together would hide exactly the comparison that matters.
  *
- * EMPTY BY DESIGN, for now. The types, the arithmetic and the wiring are real;
- * nothing writes to it yet. Instrumenting the storefront's surfaces to record
- * effort is its own piece of work, and a ledger populated with invented numbers
- * would be worse than an empty one - it would be a chart that looks like
- * evidence and is not. See `Experience` in the intelligence panel.
+ * NO LONGER EMPTY. The storefront's surfaces are instrumented now, and every
+ * entry below is emitted by a surface that actually made the decision it
+ * describes. Nothing here is invented: an entry exists only where a personalized
+ * ordering was computed alongside the merchandised default it replaced.
+ *
+ * HOW THE "REPLAYED UNPERSONALIZED" TOTAL IS EARNED.
+ *
+ * The obvious way to answer "what did personalization save this session" is to
+ * re-run the whole session with the switch off and diff the two. We do not do
+ * that, and not because it is hard - because it is unfalsifiable. A replayed
+ * session diverges at the first click: the unpersonalized shopper lands
+ * somewhere else, sees different things and takes different actions, and by
+ * step four the two sessions are not comparable and the diff is a guess.
+ *
+ * Instead every entry is PAIRED AT THE MOMENT OF THE DECISION. When the home
+ * page orders its category rail, it computes both orderings from the same
+ * inputs in the same render - the intent posterior's and the alphabetical
+ * default's - and records where the shopper's target sat in each. The decision
+ * is the unit, the pairing is exact, and neither side is a hypothetical.
+ * Summed, those pairs ARE the session replayed unpersonalized, decision by
+ * decision, with no divergence to hand-wave over.
+ *
+ * The consequence to be honest about: this counts only the decisions the
+ * shopper actually reached. A session that ended on the home page has one
+ * decision in it, and the ledger says one decision, not an extrapolated ten.
+ *
+ * ENTRIES CAN GO THE OTHER WAY. When the model reads a shopper wrong it pushes
+ * their target DOWN the rail, and that is recorded as effort incurred rather
+ * than quietly dropped. A ledger that can only count savings is an advert.
  *
  * No React, no DOM: the harness runs this.
  */
@@ -38,7 +62,8 @@ export type EffortKind =
   | 'backtrack'
   | 'dead_end'
   | 'size_hunt'
-  | 'scroll_depth';
+  | 'scroll_depth'
+  | 'suppressed_impression';
 
 export interface EffortKindMeta {
   id: EffortKind;
@@ -107,6 +132,19 @@ export const EFFORT_KINDS: Record<EffortKind, EffortKindMeta> = {
     secondsEach: 5,
     clicksEach: 0,
   },
+  /*
+   * The only kind here that is exclusively a SAVING, because it is the only one
+   * a shopper cannot perform. A slot the rules refused to fill is attention the
+   * store did not ask for, and it is worth less than a scroll because looking
+   * past an empty space is cheaper than looking past a wrong product.
+   */
+  suppressed_impression: {
+    id: 'suppressed_impression',
+    label: 'Slot withheld',
+    intent: 'A recommendation the evidence would not stand behind',
+    secondsEach: 3,
+    clicksEach: 0,
+  },
 };
 
 export interface EffortEntry {
@@ -115,6 +153,8 @@ export interface EffortEntry {
   eventId: string | null;
   kind: EffortKind;
   page: StorefrontPage;
+  /** Which surface made the decision. Free text; used to group the ledger. */
+  surface: string;
   /** How many times it happened in this occurrence. */
   count: number;
   /**
@@ -123,7 +163,14 @@ export interface EffortEntry {
    * the same ledger or the total means nothing.
    */
   avoided: boolean;
+  /** What happened, in the shopper's terms. */
   label: string;
+  /**
+   * The paired reading: the personalized outcome against the merchandised
+   * default, both computed from the same inputs in the same render. This is
+   * the field that makes an entry checkable rather than assertable.
+   */
+  detail: string | null;
 }
 
 export interface EffortTotals {
@@ -133,9 +180,32 @@ export interface EffortTotals {
   avoidedSeconds: number;
 }
 
+/**
+ * The session as it happened, against the same session with the switch off.
+ *
+ * `unpersonalized` is not a second simulation. Every avoided entry was paired
+ * against its own merchandised default at the moment it was recorded, so the
+ * counterfactual total is the sum of those pairs - see the header. `saved` can
+ * be negative, and is, for a shopper the intent model reads wrong.
+ */
+export interface EffortReplay {
+  /** Steps the shopper actually took, in this session, as it ran. */
+  personalizedClicks: number;
+  personalizedSeconds: number;
+  /** The same decisions, resolved the way the un-personalized store resolves them. */
+  unpersonalizedClicks: number;
+  unpersonalizedSeconds: number;
+  savedClicks: number;
+  savedSeconds: number;
+  /** How many paired decisions the total is built from. Its own denominator. */
+  decisions: number;
+}
+
 export interface EffortLedger {
   entries: EffortEntry[];
   incurred: EffortTotals;
+  /** Session end: what the same decisions would have cost unpersonalized. */
+  replay: EffortReplay;
   /** Per-kind counts, incurred and avoided, for the breakdown. */
   byKind: { kind: EffortKind; incurred: number; avoided: number }[];
   /**
@@ -170,12 +240,116 @@ export function buildLedger(entries: EffortEntry[]): EffortLedger {
 
   const totalSeconds = incurred.seconds + incurred.avoidedSeconds;
 
+  /*
+   * The un-personalized column.
+   *
+   * An AVOIDED entry is work the shopper did not do and the default store would
+   * have made them do, so it lands on the un-personalized side only. An
+   * INCURRED entry is work they did do - either the store made them do it, or
+   * personalization pushed their target further away - and it lands on both,
+   * because the default store would have imposed at least as much. Netting
+   * those two gives `saved`, which is exactly the sum of the paired diffs.
+   */
+  const replay: EffortReplay = {
+    personalizedClicks: incurred.clicks,
+    personalizedSeconds: incurred.seconds,
+    unpersonalizedClicks: incurred.clicks + incurred.avoidedClicks,
+    unpersonalizedSeconds: incurred.seconds + incurred.avoidedSeconds,
+    savedClicks: incurred.avoidedClicks,
+    savedSeconds: incurred.avoidedSeconds,
+    decisions: entries.length,
+  };
+
   return {
     entries,
     incurred,
+    replay,
     byKind,
     avoidedShare: totalSeconds > 0 ? incurred.avoidedSeconds / totalSeconds : null,
   };
+}
+
+/* ------------------------------------------------------------- recorders -- */
+
+/**
+ * How many rows of grid a position sits behind.
+ *
+ * Positions are converted to rows before they are counted, because a shopper
+ * does not experience "nine slots" - they experience two rows of scrolling.
+ * Counting raw positions would let a wide rail claim a saving of twelve for one
+ * flick of the wrist.
+ */
+function rowsFor(position: number, perRow: number): number {
+  return Math.ceil(Math.max(1, position) / Math.max(1, perRow));
+}
+
+export interface RankMoveInput {
+  id: string;
+  eventId: string | null;
+  page: StorefrontPage;
+  surface: string;
+  /** What moved, named the way the shopper would name it. */
+  subject: string;
+  /** 1-based position under the personalized ordering. */
+  personalizedPosition: number;
+  /** 1-based position of the SAME thing under the merchandised default. */
+  defaultPosition: number;
+  /** Slots per visual row, so positions can be read as scrolling. */
+  perRow?: number;
+}
+
+/**
+ * One thing moving in one ordering.
+ *
+ * Returns null when it did not move: a decision that changed nothing is not a
+ * saving and should not appear in a ledger as a zero-count row, because a
+ * reader counting rows would read those zeros as decisions that helped.
+ *
+ * When the personalized ordering pushed the subject DOWN, the entry comes back
+ * with `avoided: false` - a cost, in the same units, on the same ledger.
+ */
+export function rankMove(input: RankMoveInput): EffortEntry | null {
+  const perRow = input.perRow ?? 1;
+  const rowsPersonalized = rowsFor(input.personalizedPosition, perRow);
+  const rowsDefault = rowsFor(input.defaultPosition, perRow);
+  const delta = rowsDefault - rowsPersonalized;
+  if (delta === 0) return null;
+
+  return {
+    id: input.id,
+    eventId: input.eventId,
+    kind: 'scroll_depth',
+    page: input.page,
+    surface: input.surface,
+    count: Math.abs(delta),
+    avoided: delta > 0,
+    label:
+      delta > 0
+        ? `${input.subject} moved up to position ${input.personalizedPosition}`
+        : `${input.subject} pushed down to position ${input.personalizedPosition}`,
+    detail: `position ${input.defaultPosition} unpersonalized -> position ${input.personalizedPosition} personalized`,
+  };
+}
+
+export interface SimpleSavingInput {
+  id: string;
+  eventId: string | null;
+  page: StorefrontPage;
+  surface: string;
+  kind: EffortKind;
+  count: number;
+  label: string;
+  detail: string;
+}
+
+/** A saving that is a whole interaction rather than a move in an ordering. */
+export function saving(input: SimpleSavingInput): EffortEntry {
+  return { ...input, avoided: true, detail: input.detail };
+}
+
+/** Work the shopper had to do. Same shape, other sign. */
+export function cost(input: SimpleSavingInput): EffortEntry {
+  return { ...input, avoided: false, detail: input.detail };
 }
 
 /** The ledger before anything has been recorded. */

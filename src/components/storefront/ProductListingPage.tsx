@@ -21,6 +21,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
+import { rankMove, saving } from '../../ml/effort';
+import { CONFIDENCE_THRESHOLD } from '../../ml/intent';
 import { Department, League, Product, TeamId } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
 import { TeamCrest, DeptGlyph } from '../brand/Identity';
@@ -173,6 +175,9 @@ export const ProductListingPage: React.FC = () => {
     setActiveDeptFilter,
     activeLeagueFilter,
     setActiveLeagueFilter,
+    visitorProfile,
+    recordEffort,
+    userEvents,
   } = useApp();
 
   const [sel, setSel] = useState<Selections>(() => ({
@@ -277,6 +282,22 @@ export const ProductListingPage: React.FC = () => {
     }
   }, [filtered, sortBy, isPersonalizationOn, teamProb, deptProb]);
 
+  /**
+   * The same result set as the un-personalized store would order it.
+   *
+   * Sales rank, which is what "Featured" collapses to with the switch off. Only
+   * ever read by the effort ledger - nothing renders from it - so the shopper's
+   * grid is unaffected by its existence. Computed here rather than at click
+   * time so it is provably the same result set the shopper was looking at.
+   */
+  const defaultPosition = useMemo(() => {
+    const m = new Map<string, number>();
+    [...filtered]
+      .sort((a, b) => b.popularity - a.popularity)
+      .forEach((p, i) => m.set(p.id, i + 1));
+    return m;
+  }, [filtered]);
+
   // A narrower result set should start from the top, not halfway down a long
   // scroll of a previous, larger result set.
   useEffect(() => {
@@ -320,7 +341,17 @@ export const ProductListingPage: React.FC = () => {
    */
   const answeredCount = useMemo(() => FACETS.filter((f) => sel[f.key].length > 0).length, [sel]);
 
-  const railFacets = useMemo(() => {
+  /*
+   * Both orderings, every render.
+   *
+   * The rail used to compute one order and render it. It computes two now: the
+   * one on screen, and the one the same rail would have had with the intent
+   * term removed - funnel only, t pinned at 1, which is exactly what the
+   * un-personalized store serves. The second costs a sort of six items and it
+   * is what lets the effort ledger say where a facet WOULD have been when the
+   * shopper picks one. Paired at the moment of the decision, per ml/effort.ts.
+   */
+  const { railFacets, defaultRailKeys } = useMemo(() => {
     const answered: FacetDef[] = [];
     const remaining: FacetDef[] = [];
     for (const f of FACETS) (sel[f.key].length > 0 ? answered : remaining).push(f);
@@ -342,29 +373,92 @@ export const ProductListingPage: React.FC = () => {
     };
     const funnelOf = (k: FacetKey) => 1 - (FUNNEL_POS.get(k) ?? FUNNEL.length) / FUNNEL.length;
 
-    const scoreOf = (f: FacetDef) =>
-      informationGain(facetCounts[f.key]) * ((1 - t) * intentOf(f.key) + t * funnelOf(f.key));
+    const orderAt = (mix: number) => {
+      const scoreOf = (f: FacetDef) =>
+        informationGain(facetCounts[f.key]) * ((1 - mix) * intentOf(f.key) + mix * funnelOf(f.key));
+      const scores = new Map(remaining.map((f) => [f.key, scoreOf(f)]));
+      return [...remaining].sort(
+        (a, b) =>
+          (scores.get(b.key) ?? 0) - (scores.get(a.key) ?? 0) ||
+          (FUNNEL_POS.get(a.key) ?? 99) - (FUNNEL_POS.get(b.key) ?? 99)
+      );
+    };
 
-    const scores = new Map(remaining.map((f) => [f.key, scoreOf(f)]));
-    remaining.sort(
-      (a, b) =>
-        (scores.get(b.key) ?? 0) - (scores.get(a.key) ?? 0) ||
-        (FUNNEL_POS.get(a.key) ?? 99) - (FUNNEL_POS.get(b.key) ?? 99)
-    );
+    const ordered = orderAt(t);
 
     // The badge only claims what is true at this moment: the model is still
     // shaping the order while t < 1, and after that the rail is following the
     // funnel from where the shopper has got to.
     const intentStillLeading = isPersonalizationOn && t < 1;
-    return [
-      ...answered.map((facet) => ({ facet, answered: true, badge: null as string | null })),
-      ...remaining.map((facet, i) => ({
-        facet,
-        answered: false,
-        badge: i === 0 ? (intentStillLeading ? 'ML RANKED' : 'NEXT BEST') : i === 1 && intentStillLeading ? 'ML RANKED' : null,
-      })),
-    ];
+    return {
+      railFacets: [
+        ...answered.map((facet) => ({ facet, answered: true, badge: null as string | null })),
+        ...ordered.map((facet, i) => ({
+          facet,
+          answered: false,
+          badge:
+            i === 0 ? (intentStillLeading ? 'ML RANKED' : 'NEXT BEST') : i === 1 && intentStillLeading ? 'ML RANKED' : null,
+        })),
+      ],
+      defaultRailKeys: [...answered.map((f) => f.key), ...orderAt(1).map((f) => f.key)],
+    };
   }, [sel, isPersonalizationOn, intentPrediction, facetCounts]);
+
+  /* ------------------------------------------------- the effort ledger -- */
+
+  const beat = userEvents.length;
+  const lastEventId = userEvents[0]?.id ?? null;
+
+  /**
+   * SIZE PREFILL - the one place personalization removes a click outright.
+   *
+   * Everything else on this page changes an ORDER, and a shopper in a hurry can
+   * always beat a good order by scrolling fast. A prefilled size is different:
+   * the interaction does not happen at all.
+   *
+   * Three guards, and each one is there because the prefill is otherwise a way
+   * to make a shopper's own choice disappear:
+   *
+   *   - it only fires when the profile's size for this department clears the
+   *     same activation gate every other surface uses, so a size guessed from
+   *     one glance at one product does not get applied to the whole grid;
+   *   - it only fires when that size actually exists in the current result set,
+   *     because prefilling a facet into zero results manufactures the exact
+   *     dead end the ledger claims to remove;
+   *   - it fires once per department, tracked in a ref, so clearing the chip
+   *     clears it for good. A filter that reapplies itself is not a
+   *     convenience, it is a fight.
+   */
+  const prefilledFor = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!isPersonalizationOn) return;
+    const dept = sel.department.length === 1 ? sel.department[0] : null;
+    if (!dept || prefilledFor.current.has(dept)) return;
+    if (sel.size.length > 0) return;
+
+    const est = visitorProfile.traits.sizeProfile[dept as Department];
+    if (!est || est.confidence.value < CONFIDENCE_THRESHOLD) return;
+    if ((facetCounts.size.get(est.size) ?? 0) === 0) return;
+
+    prefilledFor.current.add(dept);
+    setSel((s) => ({ ...s, size: [est.size] }));
+    recordEffort(
+      saving({
+        id: `plp:size-prefill:${dept}:${beat}`,
+        eventId: lastEventId,
+        page: 'plp',
+        surface: 'Size facet',
+        kind: 'size_hunt',
+        count: 1,
+        label: `Prefilled size ${est.size} for ${dept}`,
+        detail:
+          `held at ${(est.confidence.value * 100).toFixed(0)}% confidence from earlier sessions; ` +
+          `one facet interaction the shopper did not have to make`,
+      })
+    );
+    recordEvent(`Size ${est.size} prefilled from profile`, { pageType: 'Filter', filterApplied: `size=${est.size}` });
+  }, [isPersonalizationOn, sel.department, sel.size, visitorProfile, facetCounts, beat, lastEventId]);
 
   const toggleValue = (key: FacetKey, value: string) => {
     setSel((s) => {
@@ -392,6 +486,24 @@ export const ProductListingPage: React.FC = () => {
 
       return { ...s, [key]: next };
     });
+
+    // Where that facet sat, against where the funnel alone would have put it.
+    // Only on the way IN - unticking a value is the shopper undoing something,
+    // and crediting personalization for a position in that case would be
+    // counting the same rail twice.
+    if (isPersonalizationOn && !sel[key].includes(value)) {
+      recordEffort(
+        rankMove({
+          id: `plp:facet-rail:${beat}:${key}`,
+          eventId: lastEventId,
+          page: 'plp',
+          surface: 'Facet rail',
+          subject: `${FACET_BY_KEY[key].label} filter`,
+          personalizedPosition: railFacets.findIndex((r) => r.facet.key === key) + 1,
+          defaultPosition: defaultRailKeys.indexOf(key) + 1,
+        })
+      );
+    }
 
     // Ticking a team or department box is the strongest in-session statement a
     // shopper makes, so the event has to carry that value on the field the intent
@@ -437,6 +549,23 @@ export const ProductListingPage: React.FC = () => {
   const selectedLeague = sel.league.length === 1 ? (sel.league[0] as League) : null;
 
   const openProduct = (p: Product) => {
+    // Four cards across, twenty-four to a page. The saving worth having here is
+    // the one that crosses a page boundary, and rows are the unit that makes
+    // that visible without claiming a shopper feels every slot.
+    if (isPersonalizationOn && sortBy === 'featured') {
+      recordEffort(
+        rankMove({
+          id: `plp:grid:${beat}:${p.id}`,
+          eventId: lastEventId,
+          page: 'plp',
+          surface: 'Result grid',
+          subject: p.name,
+          personalizedPosition: sorted.findIndex((x) => x.id === p.id) + 1,
+          defaultPosition: defaultPosition.get(p.id) ?? sorted.length,
+          perRow: 4,
+        })
+      );
+    }
     setSelectedProduct(p);
     setStorefrontPage('pdp');
     recordEvent(`Viewed PDP: ${p.name}`, {

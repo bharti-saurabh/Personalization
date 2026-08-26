@@ -192,7 +192,7 @@ class Accumulator {
  * model the answer. `favTeams` is reconstructed from *observed past orders*,
  * which is exactly what a real CRM would know.
  */
-function asScenario(customer: SyntheticCustomer, products: Product[]): {
+export function asScenario(customer: SyntheticCustomer, products: Product[]): {
   scenario: Scenario;
   events: UserEvent[];
 } {
