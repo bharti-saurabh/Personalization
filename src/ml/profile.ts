@@ -46,12 +46,22 @@ import {
   TEAMS,
   TEAM_BY_ID,
   TEAM_IDS,
+  rivalsOf,
 } from '../sim/taxonomy';
 import { SimClock, activeClock, seasonality, teamDemand } from '../sim/clock';
 import { scorePersona } from './persona';
 import type { PersonaBlock, PersonaFeatures } from './persona';
 import { seedWrites } from './identity';
 import type { IdentitySeed, SeedWrite } from './identity';
+/*
+ * The suppression rule reaches DOWN into the fold, which looks backwards for a
+ * moment and is not. `state.suppressedTeams` is a field of the profile, so the
+ * fold has to write it, and the definition of what counts as suppressed belongs
+ * with the gate that enforces it rather than being restated here where it could
+ * drift. The edge is one-way at runtime - suppression.ts imports only a TYPE
+ * from this file - so there is no cycle to be careful about.
+ */
+import { suppressedTeamsFor } from './suppression';
 
 /* ------------------------------------------------------------------ types -- */
 
@@ -139,6 +149,32 @@ export interface SizeEstimate {
   confidence: Confidence;
 }
 
+/**
+ * One thing this shopper already owns.
+ *
+ * `ts` is the profile clock - the fold's own tick counter - and `daysAgo` is
+ * the retailer's calendar. Both are kept because they answer different
+ * questions and neither converts into the other: the tick stamp orders this
+ * record against the rest of the session, and the calendar age is what the
+ * ownership rule actually gates on. An order placed eleven months ago is old
+ * whether it arrived in this session's first fold or its fortieth.
+ *
+ * `gift` is the one fact that makes the ownership rule safe to apply at all. An
+ * order that shipped to a different address is weak evidence that the shopper
+ * owns the item and good evidence that they might buy it again, so it lifts the
+ * exclusion rather than softening it. Retailers hold this join already; nothing
+ * about it is inferred.
+ */
+export interface PurchaseRecord {
+  productId: string;
+  /** Profile clock at the moment it was recorded. */
+  ts: number;
+  /** Calendar age of the order in days. Zero for a purchase made in session. */
+  daysAgo: number;
+  /** Shipped to an address other than the account's own. */
+  gift: boolean;
+}
+
 export interface VisitorProfile {
   visitorId: string;
   identityState: IdentityState;
@@ -164,10 +200,26 @@ export interface VisitorProfile {
   state: {
     sessionCount: number;
     lifetimeOrders: number;
-    recentPurchases: Array<{ productId: string; ts: number }>;
-    /** productId -> decayed impression count. */
+    recentPurchases: PurchaseRecord[];
+    /**
+     * productId -> decayed count of impressions that were NOT followed by a
+     * click.
+     *
+     * The "not followed by a click" half is enforced in the fold, not in the
+     * reader: a click on a product ZEROES its count rather than incrementing
+     * it. That is what makes the number mean disinterest instead of exposure.
+     * A product the shopper looked at four times and opened is not fatiguing
+     * them, it is the thing they are shopping for.
+     */
     impressionFatigue: Record<string, number>;
-    /** Rivalry suppression, written by workstream 6. */
+    /**
+     * Clubs whose merchandise the rivalry rule is currently withholding.
+     *
+     * Derived - it is `rivalsOf(top team)` above the intensity floor, recomputed
+     * on every fold - and stored anyway, because a refusal the shopper cannot
+     * see stated is indistinguishable from a catalog that has nothing in it.
+     * The Profile tab renders this field beside the affinities that caused it.
+     */
     suppressedTeams: TeamId[];
     /** Set at the `member` rung. Null at every rung below it. */
     loyaltyTier: string | null;
@@ -265,7 +317,8 @@ export type DecayField =
   | 'giftIntent'
   | 'size'
   | 'region'
-  | 'history';
+  | 'history'
+  | 'impression';
 
 export const DECAY: Record<DecayField, number> = {
   /** Slowest of the affinities. Someone who follows the NFL follows it next year. */
@@ -294,6 +347,17 @@ export const DECAY: Record<DecayField, number> = {
   size: 0.02,
   /** Does not decay: a region is replaced by better information, never faded. */
   region: 0,
+  /**
+   * How fast an ignored impression stops counting against a product.
+   *
+   * Borrowed the gift-intent constant while fatigue had no rule attached to it;
+   * it has its own now, and it is faster than gifting for a reason. Scrolling
+   * past a hat this morning says something about the hat this afternoon and
+   * almost nothing about it next week - the shopper's mood, the page they were
+   * on and what else was beside it have all changed. Fatigue that outlived the
+   * session it was earned in would be a store holding a grudge.
+   */
+  impression: 0.28,
 };
 
 /** Weight of one event by page type. Carried across from intent.ts unchanged. */
@@ -952,17 +1016,24 @@ export function applyEvent(
   }
 
   // --- 6. Impression fatigue ----------------------------------------------
-  // Decayed with the rest, so a product seen once ten events ago stops counting
-  // against itself. Surface impressions - the real source - are written here by
-  // workstream 6; a product-detail view is the one impression observable today.
-  const fatigueFactor = Math.exp(-DECAY.giftIntent * ticks);
+  //
+  // Ages with everything else, so a product scrolled past ten events ago stops
+  // counting against itself.
+  //
+  // AN EVENT WITH A PRODUCT ON IT CLEARS THAT PRODUCT'S COUNT. This used to
+  // increment it, which was the obvious reading and the wrong one: it made the
+  // field count exposure, and every rule worth building on it needs the field
+  // to count DISINTEREST. A shopper who opens the same jersey four times is not
+  // being fatigued by it. Impressions themselves arrive through
+  // `applyImpressions` - written by the surfaces that actually rendered them -
+  // and a click landing after them wipes the record, which is exactly the
+  // semantics "shown repeatedly without a click" asks for.
+  const fatigueFactor = Math.exp(-DECAY.impression * ticks);
   const impressionFatigue: Record<string, number> = {};
   for (const [id, count] of Object.entries(profile.state.impressionFatigue)) {
+    if (event.productId && id === event.productId) continue;
     const decayed = count * fatigueFactor;
     if (decayed > 0.01) impressionFatigue[id] = decayed;
-  }
-  if (event.productId) {
-    impressionFatigue[event.productId] = (impressionFatigue[event.productId] ?? 0) + 1;
   }
 
   // --- 7. Recompute every posterior once -----------------------------------
@@ -973,11 +1044,16 @@ export function applyEvent(
   gender = recompute(gender, GENDER_TRAITS, (g) => GENDER_PRIOR[g], clock, 'session');
   ageBand = recompute(ageBand, AGE_BANDS, (a) => AGE_BAND_PRIOR[a], clock, 'session');
 
+  // Recomputed from the posterior this fold just produced, never carried
+  // forward: a shopper whose evidence has drifted below the loyalist floor gets
+  // their rivals back in the same fold that took their loyalty away.
+  const suppressedTeams = suppressedTeamsFor(team.top, team.posterior[team.top], team.confidence.value);
+
   const next: VisitorProfile = {
     ...profile,
     affinities: { league, team, player, department },
     traits: { ...profile.traits, gender, ageBand, priceSensitivity, giftIntent, sizeProfile },
-    state: { ...profile.state, impressionFatigue },
+    state: { ...profile.state, impressionFatigue, suppressedTeams },
     persona: profile.persona,
     observedEvents: profile.observedEvents + 1,
     updatedAt: clock.now,
@@ -1008,7 +1084,135 @@ export function applyEvent(
     });
   }
 
+  // A refusal starting or stopping is a field write like any other, and it goes
+  // into the same stream the panel already renders. The alternative - letting
+  // the rule switch on silently and only appear once a surface happens to hit
+  // it - is how a system acquires behaviour nobody remembers agreeing to.
+  const wasSuppressing = before.state.suppressedTeams.join(',');
+  if (wasSuppressing !== suppressedTeams.join(',')) {
+    deltas.push({
+      path: 'state.suppressedTeams',
+      before: wasSuppressing || 'none',
+      after: suppressedTeams.join(', ') || 'none',
+      eventId,
+      contribution: 0,
+      confidenceAfter: Number(team.confidence.value.toFixed(4)),
+      kind: 'state',
+      label: suppressedTeams.length
+        ? `${team.top} loyalty cleared the floor - ${suppressedTeams.join(' and ')} merchandise is now withheld from recommendation slots`
+        : `${team.top} loyalty fell below the floor - rival merchandise is eligible again`,
+    });
+  }
+
   return { profile: next, deltas };
+}
+
+/* --------------------------------------------------- impressions and orders -- */
+
+/**
+ * Folds a slate of impressions in.
+ *
+ * Separate from `applyEvent` because an impression is not an event: the shopper
+ * did nothing, and nothing about their intent should move. Only the fatigue
+ * counter is touched, and no posterior is recomputed - which also means calling
+ * this cannot change what the store recommends except through the fatigue rule
+ * it exists to feed.
+ *
+ * WHY THE CALLER BATCHES. A surface renders continuously and a shopper looks
+ * once, so a per-render write would count a hover as four impressions and, worse,
+ * would feed back into the ranking that produced the render. Call sites collect
+ * what they showed and hand it over ONCE PER USER EVENT, which is both cheap and
+ * the right semantics: these are the products you were looking at when you did
+ * the next thing you did.
+ *
+ * Deduplicated per call. Six rails showing the same jersey is one impression of
+ * that jersey, not six.
+ */
+export function applyImpressions(
+  profile: VisitorProfile,
+  productIds: string[],
+  clock: ProfileClock = { now: profile.updatedAt }
+): ProfileUpdate {
+  const unique = Array.from(new Set(productIds)).filter(Boolean);
+  if (unique.length === 0) return { profile, deltas: [] };
+
+  const impressionFatigue = { ...profile.state.impressionFatigue };
+  const deltas: ProfileDelta[] = [];
+
+  for (const id of unique) {
+    const priorCount = impressionFatigue[id] ?? 0;
+    const after = priorCount + 1;
+    impressionFatigue[id] = after;
+    deltas.push({
+      path: `state.impressionFatigue.${id}`,
+      before: Number(priorCount.toFixed(3)),
+      after: Number(after.toFixed(3)),
+      eventId: null,
+      contribution: 1,
+      confidenceAfter: 1,
+      kind: 'observation',
+      label: `Shown ${id} without a click (${after.toFixed(1)} unclicked impressions)`,
+    });
+  }
+
+  return {
+    profile: { ...profile, state: { ...profile.state, impressionFatigue }, updatedAt: clock.now },
+    deltas,
+  };
+}
+
+/**
+ * Records a completed purchase.
+ *
+ * Writes durable state and nothing else: `lifetimeOrders`, and the ownership
+ * records the suppression rule reads. It does NOT feed the affinity fold, even
+ * though a purchase is the strongest preference signal a retailer holds - that
+ * signal arrives through the seed channel, on the calendar clock, because a
+ * purchase does not become less true because the shopper clicked again. Folding
+ * it in here would age it at the click rate. See the note on `Dist.seed`.
+ */
+export function applyPurchase(
+  profile: VisitorProfile,
+  items: { productId: string; gift?: boolean }[],
+  clock: ProfileClock = { now: profile.updatedAt }
+): ProfileUpdate {
+  if (items.length === 0) return { profile, deltas: [] };
+
+  const records: PurchaseRecord[] = items.map((it) => ({
+    productId: it.productId,
+    ts: clock.now,
+    daysAgo: 0,
+    gift: it.gift ?? false,
+  }));
+
+  const lifetimeOrders = profile.state.lifetimeOrders + 1;
+  const deltas: ProfileDelta[] = [
+    {
+      path: 'state.lifetimeOrders',
+      before: profile.state.lifetimeOrders,
+      after: lifetimeOrders,
+      eventId: null,
+      contribution: 1,
+      confidenceAfter: 1,
+      kind: 'state',
+      label: `Order placed - ${records.length} item(s) now carry an ownership record the recommendation slots read`,
+    },
+  ];
+
+  return {
+    profile: {
+      ...profile,
+      state: {
+        ...profile.state,
+        lifetimeOrders,
+        // Newest first, and capped: the ownership rule only looks inside a
+        // calendar window, so an unbounded list is dead weight in localStorage.
+        recentPurchases: [...records, ...profile.state.recentPurchases].slice(0, 60),
+      },
+      updatedAt: clock.now,
+    },
+    deltas,
+  };
 }
 
 /**
@@ -1056,6 +1260,36 @@ export function buildProfile(
     const seeded = applySeedWrites(profile, seedWrites(seed), clock);
     profile = seeded.profile;
     deltas.push(...seeded.deltas);
+
+    // Line items arrive alongside the aggregate writes rather than through
+    // them. `seedWrites` produces field/key/weight triples, which is the right
+    // shape for evidence and the wrong one for "you own this SKU, bought 96
+    // days ago, and it was a gift" - three facts, none of them a weight.
+    const orders = seed.member?.recentOrders ?? [];
+    if (orders.length > 0) {
+      profile = {
+        ...profile,
+        state: {
+          ...profile.state,
+          recentPurchases: orders.map((o) => ({
+            productId: o.productId,
+            ts: clock.now,
+            daysAgo: o.daysAgo,
+            gift: o.gift,
+          })),
+        },
+      };
+      deltas.push({
+        path: 'state.recentPurchases',
+        before: 0,
+        after: orders.length,
+        eventId: null,
+        contribution: 0,
+        confidenceAfter: 1,
+        kind: 'seed',
+        label: `Order history - ${orders.length} line item(s) the ownership rule can read`,
+      });
+    }
   }
 
   // Prior orders are strong, durable evidence, but they are history: they enter
@@ -1294,7 +1528,16 @@ export function applySeedWrites(
     ...profile,
     affinities: { league, team, player, department },
     traits: { ...profile.traits, gender, ageBand, priceSensitivity, giftIntent, sizeProfile, region },
-    state: { ...profile.state, lifetimeOrders, loyaltyTier },
+    state: {
+      ...profile.state,
+      lifetimeOrders,
+      loyaltyTier,
+      // A CRM record alone can make someone a loyalist, with no click anywhere
+      // in the session. Recomputing here rather than only in `applyEvent` is
+      // what stops a signed-in member's first page load from showing them the
+      // rival merchandise their order history already ruled out.
+      suppressedTeams: suppressedTeamsFor(team.top, team.posterior[team.top], team.confidence.value),
+    },
     updatedAt: clock.now,
   };
   next.persona = scorePersona(personaFeatures(next), clock.now, DECAY.team);

@@ -134,6 +134,132 @@ export const TEAM_BY_ID: Record<TeamId, TeamConfig> = Object.fromEntries(
   TEAMS.map((t) => [t.id, t])
 ) as Record<TeamId, TeamConfig>;
 
+/* --------------------------------------------------------------- rivalry -- */
+
+/**
+ * Who a fan will not be sold.
+ *
+ * This is a taxonomy fact, not a model output, and it lives here for the same
+ * reason the roster does: it is a property of the world, it is stable, and a
+ * different vertical would replace it wholesale. An apparel retailer's version
+ * of this file has no rivalries in it at all, and nothing in ml/ has to change
+ * for that to be true - `rivalsOf` simply returns nothing and the rule never
+ * fires.
+ *
+ * WHY AN EXPLICIT EDGE LIST RATHER THAN A DERIVED ONE. It is tempting to infer
+ * rivalry - same league, same division, similar market size - and every such
+ * inference is wrong somewhere that matters. Eagles and Cowboys share a
+ * division and are bitter rivals; Eagles and Commanders share the same division
+ * and are not, to the same degree. Rivalry is cultural, it is asymmetric in
+ * intensity between fan bases, and it is exactly the kind of fact a
+ * merchandising team already knows and would rather state than have guessed.
+ * So it is stated.
+ *
+ * WHAT IS DELIBERATELY NOT HERE. The three Philadelphia clubs are not rivals of
+ * each other. They share a city and, overwhelmingly, a fan base - an Eagles
+ * loyalist is more likely than the average shopper to buy a Phillies cap, not
+ * less. Same-city is an AFFINITY relation and the opposite of this one; reading
+ * "different club" as "rival" is the error this list exists to prevent.
+ *
+ * `intensity` is how strongly the two fan bases repel, in [0,1]. It is the
+ * threshold the suppression rule gates on, so a mild rivalry can be left in the
+ * graph as a documented fact without silently censoring a catalog.
+ */
+export interface Rivalry {
+  a: TeamId;
+  b: TeamId;
+  /** 0..1. Above RIVALRY_SUPPRESSION_FLOOR the merchandise is withheld. */
+  intensity: number;
+  /** What the rivalry IS, in the words a fan would use. Printed in the panel. */
+  label: string;
+}
+
+export const RIVALRIES: Rivalry[] = [
+  {
+    a: 'Eagles',
+    b: 'Cowboys',
+    intensity: 0.95,
+    label: 'NFC East - the oldest grudge in the division',
+  },
+  {
+    a: 'Eagles',
+    b: 'Chiefs',
+    intensity: 0.62,
+    label: 'Super Bowl rematch',
+  },
+  {
+    a: '76ers',
+    b: 'Lakers',
+    intensity: 0.58,
+    label: 'Finals history, 1980 and 1982',
+  },
+  {
+    // Below the suppression floor on purpose, and kept in the list to prove the
+    // floor does something. Two NFC clubs who meet in January often enough to
+    // annoy each other is not a reason to refuse a shopper a hat.
+    a: 'Cowboys',
+    b: 'Chiefs',
+    intensity: 0.24,
+    label: 'Occasional postseason meeting',
+  },
+];
+
+/**
+ * Clubs a fan of this one is antagonistic toward, strongest first.
+ *
+ * Undirected in the data and read directionally here, which is the honest
+ * simplification: fan-base antagonism genuinely is asymmetric - Cowboys fans
+ * think about the Eagles less than the reverse - but a retailer holds no
+ * evidence that would let it estimate the asymmetry, and inventing a number to
+ * look sophisticated is worse than sharing one.
+ *
+ * The Phillies return nothing. Not every club in a catalog has a rival in it,
+ * and a surface that assumed otherwise would have nothing to say about a
+ * Phillies loyalist. Callers must handle the empty case, and the panel says
+ * "no rival in this catalog" rather than going quiet.
+ */
+export function rivalsOf(team: TeamId): { team: TeamId; intensity: number; label: string }[] {
+  return RIVALRIES.filter((r) => r.a === team || r.b === team)
+    .map((r) => ({ team: r.a === team ? r.b : r.a, intensity: r.intensity, label: r.label }))
+    .sort((x, y) => y.intensity - x.intensity);
+}
+
+/** The edge between two clubs, or null when they are not rivals. */
+export function rivalryBetween(a: TeamId, b: TeamId): Rivalry | null {
+  return RIVALRIES.find((r) => (r.a === a && r.b === b) || (r.a === b && r.b === a)) ?? null;
+}
+
+/* ---------------------------------------------------------- repurchasing -- */
+
+/**
+ * Things a shopper legitimately buys twice.
+ *
+ * The "you already own this" rule is only correct for goods a person owns one
+ * of. Socks wear out, drinkware gets given away, and a kid outgrows a youth
+ * jersey inside a season - excluding those on the strength of a six-month-old
+ * order is a worse experience than the repeat impression it was meant to
+ * prevent.
+ *
+ * Keyed on SUBDEPARTMENT rather than department because the distinction lives
+ * at that level: Accessories contains both socks and a backpack, and only one
+ * of them is bought again. A department-level rule would have to be wrong about
+ * one of the two.
+ */
+export const REPURCHASABLE_SUBDEPARTMENTS: string[] = [
+  'Socks',
+  'Lanyard',
+  'Drinkware',
+  'Youth Jersey',
+  'Youth Tee',
+  'Toddler Set',
+  'Kids Hoodie',
+];
+
+/** True when owning one is not a reason to stop showing another. */
+export function isRepurchasable(subdepartment: string): boolean {
+  return REPURCHASABLE_SUBDEPARTMENTS.includes(subdepartment);
+}
+
 export interface DepartmentConfig {
   id: Department;
   /** Log-normal price parameters, in USD. */

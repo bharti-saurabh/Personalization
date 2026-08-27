@@ -290,7 +290,7 @@ export const ModelEvidence: React.FC = () => {
             <FlaskConical className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black font-display uppercase tracking-tight">MODEL EVIDENCE</h1>
+            <h1 className="text-2xl font-black font-display uppercase tracking-tight">Model evidence</h1>
             <p className="text-xs text-slate-400">
               Held-out offline evaluation of all four engines, run live against the synthetic population
             </p>

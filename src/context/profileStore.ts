@@ -21,14 +21,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Scenario, TeamId, UserEvent } from '../types';
+import { Product, Scenario, TeamId, UserEvent } from '../types';
 import {
   demoSeedFor,
   profileCompleteness,
   runIntentEngineFromProfile,
+  runImpressions,
   runProfileBuild,
   runProfilePromotion,
   runProfileUpdate,
+  runPurchase,
 } from '../ml/engine';
 import type {
   CompletenessReport,
@@ -46,8 +48,14 @@ import type {
  * and migration code for a demo's local cache is pure liability.
  *
  * v2 added `state.loyaltyTier` and the identity ladder's seed channel.
+ * v3 added the fields the suppression gate reads - `state.recentPurchases`,
+ * `state.suppressedTeams` - and inverted `state.impressionFatigue` so a click
+ * clears the count instead of adding to it. A v2 blob read under v3 rules would
+ * carry fatigue counts that mean the opposite of what the gate assumes, which is
+ * a worse failure than a discarded cache: the store would demote exactly the
+ * products the shopper had shown most interest in.
  */
-export const PROFILE_SCHEMA_VERSION = 2;
+export const PROFILE_SCHEMA_VERSION = 3;
 
 const STORAGE_PREFIX = 'prosports.profile.v';
 
@@ -163,6 +171,24 @@ export interface ProfileStore {
   deltaLog: ProfileDelta[];
   /** Folds one event in and persists the result. */
   recordEvent: (event: UserEvent) => void;
+  /**
+   * Records that these products were put in front of the shopper.
+   *
+   * Separate from `recordEvent` because an impression is not something the
+   * shopper did. Folding it through the same path would move the affinity
+   * posterior towards whatever the store chose to show, which is the loop that
+   * makes a recommender agree with itself forever.
+   */
+  noteImpressions: (productIds: string[]) => void;
+  /**
+   * Records a completed order, so the ownership rule has something to read.
+   *
+   * Also outside the affinity fold, for a less obvious reason: the purchase's
+   * evidence has already been counted. The clicks that led to it were folded as
+   * they happened, and counting the basket again would let one decision vote
+   * twice.
+   */
+  recordPurchase: (items: { productId: string; gift?: boolean }[]) => void;
   /** Discards the stored profile and refolds from the scenario's history. */
   reset: () => void;
 
@@ -202,7 +228,14 @@ export function useProfileStore(
   seedEvents: UserEvent[],
   activeTeamOverride?: TeamId | null,
   context?: VisitorContext,
-  initialState: IdentityState = 'contextual'
+  initialState: IdentityState = 'contextual',
+  /**
+   * The live catalog, used only to resolve a seeded member's order history onto
+   * real SKUs. Optional, and its absence is not an error: without it the seed
+   * simply carries no line items, and the ownership rule has nothing to fire on
+   * for a returning shopper - which is honest, not broken.
+   */
+  catalog?: Product[]
 ): ProfileStore {
   const visitorId = visitorIdFor(scenario);
 
@@ -214,8 +247,14 @@ export function useProfileStore(
   const contextRef = useRef(context);
   contextRef.current = context;
 
+  // Held in a ref for the same reason as the context: the seed must not change
+  // identity every time the market pass rebuilds the catalog, or `initialise`
+  // would re-run and throw away the profile the session has been building.
+  const catalogRef = useRef(catalog);
+  catalogRef.current = catalog;
+
   const seedFor = useCallback(
-    (state: IdentityState) => demoSeedFor(scenario, state, contextRef.current),
+    (state: IdentityState) => demoSeedFor(scenario, state, contextRef.current, catalogRef.current),
     [scenario]
   );
 
@@ -285,6 +324,38 @@ export function useProfileStore(
     sessionRef.current = [event, ...sessionRef.current];
   }, []);
 
+  // Both of these write state the gate reads and nothing else reads, so neither
+  // appends to `sessionRef`: a promotion replays the session, and replaying an
+  // impression would double-count fatigue against a shopper whose only mistake
+  // was signing in.
+  const noteImpressions = useCallback((productIds: string[]) => {
+    if (productIds.length === 0) return;
+    const current = profileRef.current;
+    const { profile: next, deltas } = runImpressions(current, productIds, {
+      now: current.observedEvents,
+      ticks: 0,
+    });
+    if (deltas.length === 0) return;
+    profileRef.current = next;
+    saveProfile(next);
+    setProfile(next);
+    setDeltaLog((log) => [...deltas].reverse().concat(log).slice(0, DELTA_LOG_CAP));
+  }, []);
+
+  const recordPurchase = useCallback((items: { productId: string; gift?: boolean }[]) => {
+    if (items.length === 0) return;
+    const current = profileRef.current;
+    const { profile: next, deltas } = runPurchase(current, items, {
+      now: current.observedEvents,
+      ticks: 0,
+    });
+    profileRef.current = next;
+    saveProfile(next);
+    setProfile(next);
+    setLastDeltas(deltas);
+    setDeltaLog((log) => [...deltas].reverse().concat(log).slice(0, DELTA_LOG_CAP));
+  }, []);
+
   const promoteTo = useCallback(
     (state: IdentityState) => {
       if (state === profileRef.current.identityState) return;
@@ -334,6 +405,8 @@ export function useProfileStore(
     lastDeltas,
     deltaLog,
     recordEvent,
+    noteImpressions,
+    recordPurchase,
     reset,
     identityState: profile.identityState,
     promoteTo,

@@ -82,6 +82,24 @@ The left nav is ordered for a walkthrough. The intended path:
    the disclosure under the sort control, or the pinned card at the top of the Decisions
    tab, for the scorer, its weights, the per-product driver breakdown, and where each item
    would have sat under popularity alone.
+9. **Watch it refuse.** As the Eagles loyalist, scroll the homepage to "Trending across the
+   leagues" — a rail of the top sellers from every club, which is the only place in the store
+   where a rival can reach a loyalist. The gate refuses 45 of the 50 candidates — 44 to the
+   rivalry rule alone — and fills five of the eight tiles, leaving three visibly empty rather
+   than backfilling them with a rival. The line under the rail names why: rival club
+   merchandise, things already bought, things scrolled past before. The Decisions tab names the SKU and the rule; the storefront names only the
+   rule, deliberately. Untick "Apply the suppression gate" in the Recommendation Lab to see
+   the same candidates come back, having scored well the whole time.
+10. **Watch it decline to refuse.** Still as the Eagles loyalist, open a *Cowboys* product.
+    The rival rule stands down — you asked for that club by name — and says so: "Showing
+    Cowboys anyway… you opened this one, so that rule is off for Cowboys on this page." It
+    releases that club on that page only, and keeps holding every other rival on every slot
+    the store chose. The Decisions tab records the stand-down as its own row.
+11. **The hero has a higher bar than a carousel tile.** Switch to the Anonymous scenario:
+    the banner drops its club colours and says it read the club at *n*% where that slot
+    needs 72%, while the carousel below it keeps personalizing at its own lower threshold.
+    The two numbers are not comparable as printed — each slot's bar is denominated in its own
+    engine's score, and every policy in `SURFACE_POLICIES` carries the name of that scale.
 
 Five preset scenarios along the top drive all of this; the ML Intelligence Trace panel on
 the right shows the seven-step decision sequence for whatever is currently on screen.
@@ -115,7 +133,7 @@ src/
 
 From `npm run sim:eval` at n = 2000. Reproduced live on the Model Evidence tab. This is
 the current harness — the one where a session draws a department mission at its start and
-the held-out target is something the shopper actually chose. `WHAT-WE-BUILT.md` §9 carries
+the held-out target is something the shopper actually chose. `WHAT-WE-BUILT.md` §10 carries
 the retired harness alongside it and explains why the two are not comparable.
 
 | Engine | Metric | Model | Popularity baseline | Lift |

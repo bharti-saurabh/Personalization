@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
+import { WithheldNotice } from './WithheldNotice';
 import { ProductImage } from './ProductImage';
 import {
   Star,
@@ -21,6 +22,10 @@ import { SimilarityMatch, ComplementMatch } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
 import { TeamCrest, LeagueBadge } from '../brand/Identity';
 import { saving } from '../../ml/effort';
+import { SizeAndFit, useFitPrediction } from './SizeAndFit';
+import { SubstitutionPanel } from './SubstitutionPanel';
+import { BadgeExplainer, pickStat, useBadgeStats } from './BadgeExplainer';
+import { needsSubstitute } from '../../ml/engine';
 
 export const ProductDetailPage: React.FC = () => {
   const {
@@ -37,10 +42,54 @@ export const ProductDetailPage: React.FC = () => {
     isPersonalizationOn,
     recordEffort,
     userEvents,
+    similarityGate,
+    complementGate,
   } = useApp();
 
-  const [selectedSize, setSelectedSize] = useState<string>('L');
   const [explainSimilarityModal, setExplainSimilarityModal] = useState<SimilarityMatch | null>(null);
+
+  /* ------------------------------------------------------------ size and fit */
+
+  // The size facet used to open on a hard-coded 'L'. It now opens on whatever
+  // the fit model can defend, and on nothing at all when it can defend nothing.
+  const fit = useFitPrediction(selectedProduct);
+  const [selectedSize, setSelectedSize] = useState<string | null>(null);
+
+  /*
+   * Seed the selection once per product, never again.
+   *
+   * The reading moves during a session - two clicks in, a population guess can
+   * become an observation - and a control that re-seeded on every change would
+   * silently overwrite a size the shopper had chosen by hand. A prefill the
+   * shopper cannot override is not a prefill, it is a decision taken for them.
+   */
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (seededFor.current === selectedProduct.id) return;
+    seededFor.current = selectedProduct.id;
+    setSelectedSize(fit.prefill ? fit.size : null);
+  }, [selectedProduct.id, fit]);
+
+  /*
+   * Two different failures, treated differently.
+   *
+   * A size that is gone is IMPOSSIBLE: there is nothing to add, so the buy
+   * button is replaced by the substitution ranking. A pre-order is merely SLOW:
+   * the shopper can have this exact product and may well want to, so the button
+   * stays and the ranking is offered beside it. `needsSubstitute` is true for
+   * both - it answers "does the ranker have something to do here", not "is the
+   * shopper allowed to buy this".
+   */
+  const preOrder = selectedProduct.inventoryStatus === 'Pre-Order';
+  const sizeGone = needsSubstitute(selectedProduct, selectedSize) && !preOrder;
+
+  // Every badge on this page, with the population statistic behind it.
+  const badgeStats = useBadgeStats(selectedProduct, products);
+  const marketLabel = selectedProduct.movedFrom
+    ? `From ${selectedProduct.movedFrom.team}`
+    : selectedProduct.marketFlag && selectedProduct.marketFlag.lift < 1
+      ? 'Demand cut'
+      : 'Hot market';
 
   // Compute displayed Similarity Matches depending on Personalization state
   const displayedSimilarityMatches: SimilarityMatch[] = React.useMemo(() => {
@@ -112,29 +161,38 @@ export const ProductDetailPage: React.FC = () => {
    * been bad, but that no evidence stood behind them, which is why they are
    * priced at three seconds of attention and no click.
    */
+  /*
+   * The rail's shortfall entry used to be written here, counting slots the
+   * co-order graph had no evidence for. The suppression gate now owns that
+   * accounting - it sees the same empty slots and knows WHICH rule emptied them -
+   * and two writers for one number is how a ledger starts disagreeing with
+   * itself. What is left here is the case the gate genuinely cannot see: a pool
+   * that came back thin before any rule was applied.
+   */
   const RAIL_SLOTS = 4;
   useEffect(() => {
     if (!isPersonalizationOn) return;
-    const withheld = RAIL_SLOTS - complementMatches.length;
-    if (withheld <= 0) return;
+    const retrieved = complementGate.unsuppressed.length;
+    const short = RAIL_SLOTS - retrieved;
+    if (short <= 0) return;
     recordEffort(
       saving({
         // Keyed on the ANCHOR alone, not on the beat. The rail for one product
         // is one decision, and it does not become a second one because an
         // unrelated event elsewhere on the page bumped the event count.
-        id: `pdp:complement-gate:${selectedProduct.id}`,
+        id: `pdp:complement-thin:${selectedProduct.id}`,
         eventId: userEvents[0]?.id ?? null,
         page: 'pdp',
         surface: 'Complete the look',
         kind: 'suppressed_impression',
-        count: withheld,
-        label: `Withheld ${withheld} of ${RAIL_SLOTS} complement slots`,
+        count: short,
+        label: `Withheld ${short} of ${RAIL_SLOTS} complement slots`,
         detail:
-          `the co-order graph had evidence for ${complementMatches.length}; ` +
+          `the co-order graph had evidence for ${retrieved} before any rule ran; ` +
           `the un-personalized rail fills all ${RAIL_SLOTS} from a price sort regardless`,
       })
     );
-  }, [isPersonalizationOn, complementMatches, selectedProduct, userEvents, recordEffort]);
+  }, [isPersonalizationOn, complementGate, selectedProduct, userEvents, recordEffort]);
 
   const handleProductSelect = (p: typeof selectedProduct) => {
     setSelectedProduct(p);
@@ -143,6 +201,19 @@ export const ProductDetailPage: React.FC = () => {
       team: p.team,
       department: p.department,
     });
+  };
+
+  /**
+   * Taking a substitute.
+   *
+   * The size comes with it. The whole claim of the panel is that this product,
+   * in this size, can be had today - landing the shopper on it with an empty
+   * facet would make them prove that again by hand.
+   */
+  const jumpToSubstitute = (p: typeof selectedProduct, size: string | null) => {
+    handleProductSelect(p);
+    seededFor.current = p.id;
+    setSelectedSize(size);
   };
 
   const handleExplainSimilarityClick = (match: SimilarityMatch, e: React.MouseEvent) => {
@@ -196,9 +267,11 @@ export const ProductDetailPage: React.FC = () => {
             <div className="min-w-0">
               <p className="text-[12px] font-extrabold text-slate-900 leading-snug">
                 {selectedProduct.marketFlag.headline}
-                <span className="ml-2 align-middle text-[8.5px] font-bold uppercase tracking-wide rounded px-1 py-px bg-white border border-straive-200 text-straive-700">
-                  Simulated market event
-                </span>
+                <BadgeExplainer stat={pickStat(badgeStats, marketLabel)} className="ml-2 align-middle">
+                  <span className="text-[8.5px] font-bold uppercase tracking-wide rounded px-1 py-px bg-white border border-straive-200 text-straive-700">
+                    Simulated market event
+                  </span>
+                </BadgeExplainer>
               </p>
               <p className="text-[11px] text-slate-600 leading-snug mt-0.5">
                 {selectedProduct.movedFrom
@@ -236,9 +309,24 @@ export const ProductDetailPage: React.FC = () => {
                     <LeagueBadge league={selectedProduct.league} />
                   </span>
                 </span>
-                <span className="bg-emerald-500 text-slate-950 font-black text-xs px-3 py-1 rounded-full shadow-xs">
-                  {selectedProduct.inventoryStatus}
-                </span>
+                <BadgeExplainer
+                  stat={pickStat(
+                    badgeStats,
+                    selectedProduct.inventoryStatus === 'Low Stock' ? 'Almost gone' : 'Pre-Order'
+                  )}
+                >
+                  <span
+                    className={`font-black text-xs px-3 py-1 rounded-full shadow-xs ${
+                      selectedProduct.inventoryStatus === 'Pre-Order'
+                        ? 'bg-slate-900 text-white'
+                        : selectedProduct.inventoryStatus === 'Low Stock'
+                          ? 'bg-amber-400 text-slate-950'
+                          : 'bg-emerald-500 text-slate-950'
+                    }`}
+                  >
+                    {selectedProduct.inventoryStatus}
+                  </span>
+                </BadgeExplainer>
               </div>
             </div>
 
@@ -294,51 +382,76 @@ export const ProductDetailPage: React.FC = () => {
                   <div className="flex items-baseline space-x-2">
                     <span className="text-3xl font-black text-red-600">${selectedProduct.salePrice}</span>
                     <span className="text-base text-slate-400 line-through">${selectedProduct.price}</span>
-                    <span className="bg-red-100 text-red-800 text-xs font-bold px-2 py-0.5 rounded">
-                      SAVE ${(selectedProduct.price - selectedProduct.salePrice).toFixed(2)}
-                    </span>
+                    <BadgeExplainer
+                      stat={pickStat(
+                        badgeStats,
+                        `${Math.round(((selectedProduct.price - selectedProduct.salePrice) / selectedProduct.price) * 100)}% OFF`
+                      )}
+                    >
+                      <span className="bg-red-100 text-red-800 text-xs font-bold px-2 py-0.5 rounded">
+                        SAVE ${(selectedProduct.price - selectedProduct.salePrice).toFixed(2)}
+                      </span>
+                    </BadgeExplainer>
                   </div>
                 ) : (
                   <span className="text-3xl font-black text-slate-900">${selectedProduct.price}</span>
                 )}
               </div>
 
-              {/* Size Selector */}
-              {selectedProduct.department !== 'Collectibles' && (
-                <div className="space-y-2 my-4">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="font-bold text-slate-800">Select Size:</span>
-                    <span className="text-red-600 font-semibold cursor-pointer">Size Chart</span>
-                  </div>
-                  <div className="flex space-x-2">
-                    {['S', 'M', 'L', 'XL', '2XL'].map((size) => (
-                      <button
-                        key={size}
-                        onClick={() => setSelectedSize(size)}
-                        className={`w-11 h-10 rounded-lg text-xs font-bold transition-all border ${
-                          selectedSize === size
-                            ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                            : 'bg-white text-slate-800 border-slate-300 hover:border-slate-400'
-                        }`}
-                      >
-                        {size}
-                      </button>
-                    ))}
-                  </div>
+              {/* Size selector, driven by the fit model. See SizeAndFit.tsx. */}
+              <div className="my-4">
+                <SizeAndFit
+                  product={selectedProduct}
+                  fit={fit}
+                  selected={selectedSize}
+                  onSelect={setSelectedSize}
+                  surface="Size selector"
+                />
+              </div>
+
+              {/* Out of stock, ranked. The panel replaces the buy button rather
+                  than sitting under it - offering to add a size that cannot be
+                  shipped is the dead end this whole screen exists to answer. */}
+              {sizeGone ? (
+                <SubstitutionPanel
+                  anchor={selectedProduct}
+                  requestedSize={selectedSize}
+                  variant="block"
+                  onSelect={jumpToSubstitute}
+                />
+              ) : (
+                <div className="space-y-3">
+                  <button
+                    disabled={!selectedSize}
+                    onClick={() => {
+                      if (!selectedSize) return;
+                      addToCart(selectedProduct, selectedSize);
+                      setStorefrontPage('cart');
+                    }}
+                    className={`w-full font-extrabold py-3.5 rounded-xl text-sm shadow-md flex items-center justify-center space-x-2 transition-transform ${
+                      selectedSize
+                        ? 'bg-red-600 hover:bg-red-700 text-white active:scale-98'
+                        : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    <ShoppingBag className="h-5 w-5" />
+                    <span>
+                      {!selectedSize
+                        ? 'Choose a size'
+                        : `${preOrder ? 'Pre-order' : 'Add to cart'} · $${(selectedProduct.salePrice || selectedProduct.price).toFixed(2)}`}
+                    </span>
+                  </button>
+
+                  {preOrder && (
+                    <SubstitutionPanel
+                      anchor={selectedProduct}
+                      requestedSize={selectedSize}
+                      variant="offer"
+                      onSelect={jumpToSubstitute}
+                    />
+                  )}
                 </div>
               )}
-
-              {/* Add to Cart Button */}
-              <button
-                onClick={() => {
-                  addToCart(selectedProduct, selectedSize);
-                  setStorefrontPage('cart');
-                }}
-                className="w-full bg-red-600 hover:bg-red-700 text-white font-extrabold py-3.5 rounded-xl text-sm shadow-md flex items-center justify-center space-x-2 transition-transform active:scale-98"
-              >
-                <ShoppingBag className="h-5 w-5" />
-                <span>ADD TO CART — ${(selectedProduct.salePrice || selectedProduct.price).toFixed(2)}</span>
-              </button>
             </div>
 
             {/* Value Props Badges */}
@@ -367,7 +480,7 @@ export const ProductDetailPage: React.FC = () => {
             <div className="flex items-center space-x-2">
               <Info className="h-4 w-4 text-slate-500 shrink-0" />
               <span>
-                Personalization is <b>OFF</b> — Showing standard unweighted catalog recommendations without vector similarity models or ML decision explanations.
+                Personalization is <b>off</b>. Showing standard unweighted catalog recommendations, without vector similarity models or model decision explanations.
               </span>
             </div>
             <span className="font-mono text-[10px] uppercase tracking-wider bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-bold border border-slate-300">
@@ -434,6 +547,11 @@ export const ProductDetailPage: React.FC = () => {
               </div>
             ))}
           </div>
+
+          {/* Under the rail, not over it. The shopper reads what IS there first;
+              the account of what is not belongs after it, in the same way a
+              footnote follows the sentence it qualifies. */}
+          <WithheldNotice result={similarityGate} active={isPersonalizationOn} className="mt-4" />
         </div>
       </section>
 
@@ -493,6 +611,8 @@ export const ProductDetailPage: React.FC = () => {
               </div>
             ))}
           </div>
+
+          <WithheldNotice result={complementGate} active={isPersonalizationOn} className="mt-4" />
         </div>
       </section>
 

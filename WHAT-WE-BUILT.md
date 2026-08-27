@@ -30,6 +30,8 @@ number:
 | Cosine k-NN over a 73-dimensional hybrid embedding | Any real shopper, order or click |
 | A directional co-order graph with empirical-Bayes shrinkage | Production accuracy figures |
 | Confidence gating, inventory checks, diversity rules | A forecast of revenue lift |
+| A pure profile fold with per-field decay and cross-field propagation | Any real profile, address or consent record |
+| Six lifecycle send gates, a hashed holdout arm and per-channel quiet hours | Any message actually sent |
 
 The offline evaluation measures how well each engine **recovers a process we wrote
 ourselves**. Treat it as an upper bound and as evidence the pipeline is wired correctly.
@@ -44,7 +46,8 @@ it runs in, and let the client see every decision it makes and why.
 
 ## 2. What is on screen
 
-Nine screens, reachable from one collapsible left rail.
+Eleven destinations, reachable from one collapsible left rail: the storefront, and ten
+screens behind it.
 
 ### The storefront (4 pages)
 
@@ -53,11 +56,11 @@ The shopping experience a customer would actually see. It is the default view an
 
 | Page | What it demonstrates |
 | --- | --- |
-| **Search** | A box that maps free text onto taxonomy nodes, completes it ranked by profile, and never returns an empty page — see §3.1–3.3 |
+| **Search** | A box that maps free text onto taxonomy nodes, completes it ranked by profile, and never returns an empty page — see §4.1–4.3 |
 | **Home** | Personalized hero bound to the predicted club, a predicted-teams widget ordered by posterior probability, a department strip ordered by department intent, and a "Picked for you" carousel ranked by the intent model and filtered to what is in stock |
-| **Catalog** | The search results page *and* the browse page. Query understanding, zero-result rescue, a filter rail whose **order re-sequences as you shop**, and a default sort that is an explicit model output — see §3 |
-| **Product** | Similarity ("You may also like") and complement ("Complete the look") rails, each with the engine that produced them named and the score explained in words |
-| **Cart** | "Fans Also Add" cross-sell driven by the complement engine, with basket value attributed to recommendations rather than an asserted lift |
+| **Catalog** | The search results page *and* the browse page. Query understanding, zero-result rescue, a filter rail whose **order re-sequences as you shop**, and a default sort that is an explicit model output — see §4 |
+| **Product** | A **predicted, prefilled size** with its confidence and its reasons; **out-of-stock substitution** shown as its own ranking decision against its own objective; **merchandising badges that carry the population statistic behind them** on hover; and similarity ("You may also like") and complement ("Complete the look") rails, each naming the engine that produced it, explaining the score in words, and stating what was **withheld** and under which rule — see §5 and §10 |
+| **Cart** | "Fans Also Add" cross-sell driven by the complement engine, with basket value attributed to recommendations rather than an asserted lift — and a **substituted line counted separately**, as revenue kept rather than revenue created. Checkout writes ownership, so the gate stops offering what was just bought |
 
 A **Personalization ON/OFF** switch in the app bar is not cosmetic — with it off, the
 storefront genuinely falls back to popularity ordering and generic merchandising, so the
@@ -68,10 +71,15 @@ Multi-Team Sports Shopper, Anonymous First-Time Visitor, Hot-Market Event Shoppe
 Low-Confidence Customer who deliberately *fails* the confidence gate — because a demo
 that only shows the happy path is not showing the system.
 
+An **identity ladder** sits on the same strip — five rungs, switchable mid-session, from
+anonymous through to authenticated member. It is the most important control in the demo,
+because the question it answers is the one the room is really asking. Promotion re-folds
+the whole session rather than patching the profile. See §3.
+
 A **Market deck** sits on the same control strip: seven buttons that fire a real market
 event into the simulated world — a trade, an injury, a championship, a kit launch. Pressing
 one rebuilds the catalog, the population and the co-order graphs, re-ranks every open
-surface, and writes an entry into the decision stream. See §7.
+surface, and writes an entry into the decision stream. See §9.
 
 ### The intelligence panel (always on the right)
 
@@ -81,30 +89,100 @@ on screen, and what changed since the last event. Three tabs — **Profile** (wh
 system currently believes about this shopper, every field with its confidence, source and
 decay constant), **Decisions** (the delta stream: triggering event, models that ran, fields
 written, surfaces re-ranked, expandable to the full feature vector), and **Experience**
-(the per-session effort ledger, §8.3). Every Decisions entry reads mechanism, then consequence, then number —
+(the per-session effort ledger, §12.3). Every Decisions entry reads mechanism, then consequence, then number —
 no entry ends on a posterior.
 
-### The deep dives (7 screens)
+### The deep dives (10 screens)
 
 | Screen | What it holds |
 | --- | --- |
-| **Twin Store Race** | Two grids, same shopper, same seed, same target — stepped side by side (§8.1) |
+| **Twin Store Race** | Two grids, same shopper, same seed, same held-out target — stepped side by side (§12.1) |
 | **Customer Journey** | The session as a timeline: every event, every re-scoring, every shift in the posterior |
-| **Model Intelligence** | The three engines opened up — features, weights, decay constants, thresholds |
-| **Model Evidence** | The offline evaluation results, labelled as recovery of the simulated process |
-| **Recommendation Lab** | A live sandbox: change the anchor, the engine, the constraints and the confidence gate, and watch the candidate pipeline move |
+| **Lifecycle Triggers** | Which email or SMS would fire from this session, every gate it passed and the rule that stopped the rest (§11) |
+| **Model Intelligence** | The engines opened up — features, weights, decay constants, thresholds |
+| **Model Evidence** | The offline evaluation results, labelled as recovery of the simulated process, with both harness definitions side by side (§14) |
+| **Inference Pipeline** | One prediction walked end to end through all seven stages |
+| **Recommendation Lab** | A live sandbox: change the anchor, the engine, the constraints and the confidence gate, and watch the candidate pipeline move (§7) |
+| **Model Registry** | All eleven models: version, inputs, the profile field each writes, decay, activation bar, live offline metric, and when it last fired this session. Rows expand to the live feature vector (§13) |
 | **System Architecture** | How this would be built for real — services, stores, latency budget, failure modes |
 | **Straive Partnership** | What the delivery team owns |
 
 ---
 
-## 3. The main demo path: search → catalog → product
+## 3. The visitor profile, and the identity ladder
+
+Everything downstream reads one object. It is built by a **pure fold** — events in,
+profile out — and never patched in place.
+
+### 3.1 Five rungs, and the demo can move between them mid-session
+
+The question a room actually asks is *"what could you do for someone who has not told you
+who they are?"* The identity control in the demo strip answers it by making the rung a
+variable rather than an assumption:
+
+| Rung | Basis | What it adds |
+| --- | --- | --- |
+| **Anonymous** | Nothing | Nothing. Popularity ordering and generic merchandising |
+| **Contextual** | The arriving request — time, region, referrer | Enough to re-merchandise the front page without knowing anyone |
+| **Returning** | A first-party cookie | Prior sessions, decayed |
+| **Identified** | An address captured with consent | Order history, CRM facts, an email channel |
+| **Member** | Authentication | Loyalty tier, a verified mobile number |
+
+**Promotion re-folds rather than patches.** The session's clicks are replayed against the
+richer seed, so behaviour that contradicts a newly-arrived CRM fact stays visible as a
+contested distribution instead of being silently overwritten.
+
+The consequence is worth stating because it looks like a bug for a second: **signing in
+can make a field *less* certain.** The CRM says one thing and this session says another,
+and the profile shows the argument rather than picking a winner. Patching would have hidden
+that, which is exactly why it does not patch.
+
+### 3.2 Every field carries its own confidence, source and decay constant
+
+A profile field is not a value. It is a value, an evidence count, a source, a timestamp
+and a decay constant — and the panel renders all five.
+
+The decay constants are per field, and each one is an opinion the code states so it can be
+argued with:
+
+| Field | λ | Why |
+| --- | --- | --- |
+| League | 0.03 | Someone who follows the NFL follows it next year |
+| Team | 0.35 | Volatile — swings with the fixture list, a result, a campaign email |
+| Player | 0.45 | Faster than team. Players are traded, injured and retired; allegiance is not |
+| Department | 0.08 | Slow. A jersey buyer stays a jersey buyer across visits |
+| Gender / age band | 0.02 | Near-static. Who a shopper buys for changes on a timescale of years |
+| Price sensitivity | 0.1 | Budget moves with circumstance, but not with a click |
+| Gift intent | 0.2 | Fast, deliberately — gifting is an episode, not a trait |
+
+Durable evidence — completed orders, CRM facts — is held in a **separate channel** from
+session clicks. Folding the two together was the obvious first implementation and it is
+wrong: order history would then fade at the click rate, so a shopper with ten years of
+purchases behind them would have all of it discounted to nothing by twelve minutes of
+browsing. **A purchase does not become less true because the shopper clicked again.**
+
+### 3.3 Cross-field propagation, and a delta log
+
+A click on a kids' Eagles jersey is not one observation. It is evidence about club, about
+department, about age band and about gift intent, and the fold writes all four — each with
+its own contribution weight and each appearing in the delta stream with a plain-language
+cause.
+
+Every field write since the profile was created is kept as a **delta**: the dotted path,
+the value before, the value after, the event that caused it, the evidence weight it added,
+and the confidence afterwards. The Profile tab renders those deltas rather than diffing two
+snapshots, so what appears on screen is what actually happened rather than a reconstruction
+of it.
+
+---
+
+## 4. The main demo path: search → catalog → product
 
 This is the section to demo slowly. It is one continuous path, and each step is a
 different kind of personalization: **understanding** what was asked, **ordering** what
 came back, and **choosing what to ask next**.
 
-### 3.1 The search box maps free text onto the taxonomy
+### 4.1 The search box maps free text onto the taxonomy
 
 A storefront search bar is usually a substring match over product names. This one was
 too, and it failed the way they all fail: type *something for my son* and you get an
@@ -143,7 +221,7 @@ What it deliberately does **not** do: spell correction, embeddings, learned syno
 None of those can be demonstrated honestly against a synthetic catalog with no query
 logs, and a demo that fakes them is worse than one that says so.
 
-### 3.2 Autocomplete ranked by profile
+### 4.2 Autocomplete ranked by profile
 
 The dropdown has two bands — **scopes** (searches to run) and **products** — and each is
 ordered by the visitor profile. Beside every scope row that moved sits the position it
@@ -164,7 +242,7 @@ by assortment weight — a genuine merchandised default.
 Above the rows, a chip strip shows the interpretation updating **as the sentence is still
 being typed**. That is the demo moment.
 
-### 3.3 Zero-result rescue
+### 4.3 Zero-result rescue
 
 A zero-result page is the most expensive screen in retail. This build does not have one.
 
@@ -193,7 +271,7 @@ The rescue is also the one search event that writes to the effort ledger, as a `
 avoided — and only when personalization is on, because that is the only condition under
 which the un-personalized store would genuinely have shown the empty page.
 
-### 3.4 The catalog page re-sequences its own filters
+### 4.4 The catalog page re-sequences its own filters
 
 A conventional faceted listing has a fixed filter order — Department, Gender, Player,
 Size, Price — and it never changes. That order is wrong twice over: it ignores what the
@@ -233,7 +311,7 @@ above the rail changes text to say which of the two orderings is currently runni
 
 ---
 
-### 3.5 "Recommended" is a model output, and says so
+### 4.5 "Recommended" is a model output, and says so
 
 The catalog's default sort used to be called **Featured**. That was the wrong word twice
 over. On a real storefront, *Featured* names a shelf a merchandiser ordered by hand — so
@@ -279,10 +357,92 @@ shopper's filters and their query, and by nothing else.
 
 ---
 
-## 4. The engines
+## 5. Size, fit and availability
 
-Everything in `src/ml/` — the three scoring engines below, plus the query engine (§3.1)
-and the Recommended ranker (§3.5). None of them has a React or DOM dependency, so they
+Three decisions the shopper makes on a product page that most personalization demos skip,
+because none of them are a carousel.
+
+### 5.1 The size is predicted, prefilled, and shows its working
+
+The fit model reads the size profile the fold maintains per department and predicts a size
+before the shopper touches the ladder. It prefills only above a stated floor
+(`FIT_PREFILL_FLOOR = 0.55`); below it the ladder opens empty and the button says
+**Choose a size** rather than guessing.
+
+Four things about how it is shown:
+
+- **The confidence is on screen as a number**, not implied by the prefill existing.
+- **A "Why this size" disclosure** lists the numbered reasons, any adjustments applied,
+  and the distribution across the ladder as bars.
+- **Sizes that are unavailable stay visible, struck through and disabled.** Removing them
+  would tell the shopper their size does not exist rather than that it is gone.
+- **Transfer across departments is damped** (`FIT_TRANSFER_DAMPING = 0.6`) and the ceiling
+  on a purely population-based read is low (`POPULATION_CONFIDENCE_CEILING = 0.3`) — a
+  guess from the cohort is not allowed to look like knowledge of the person.
+
+**Gift intent blocks the prefill without erasing what the model knew.** If the session
+reads as buying for someone else — above `0.65` on the scalar, with at least `0.25`
+confidence behind it — the size and its confidence stay on screen and only the *prefill*
+is withheld, with the reason named. The threshold lives in `ml/fit.ts` and is read by both
+surfaces that ask, because a threshold written down twice eventually gets written down two
+different ways.
+
+One trap worth recording: the gift-intent scalar starts at **0.5**, which means *"no idea"*
+rather than *"no gift"*. Reading a neutral 0.5 as a gift would have blocked the prefill for
+every shopper who had done nothing at all. There is a test named for it.
+
+### 5.2 Out-of-stock substitution is a ranking decision, and is shown as one
+
+When a size is gone the buy button is replaced; when a product is pre-order the buy button
+stays and a substitution panel is offered *beside* it. **Same engine, same gate, same
+divergence table — a different claim on the shopper.** A size that is gone blocks; a
+pre-order is slow.
+
+The substitution ranker optimises **continuity**, not similarity, and the weights are
+stated:
+
+| Signal | Weight |
+| --- | --- |
+| Same player | 0.30 |
+| Same club | 0.24 |
+| Same department | 0.18 |
+| Same style | 0.10 |
+| Price proximity | 0.10 |
+| Same sub-department | 0.08 |
+
+Beyond a 25% price gap it stops being a substitution and starts being an upsell, so the
+price term goes to zero.
+
+**Availability is a gate, not a feature.** Candidates that cannot be had in the requested
+size are rejected before scoring rather than down-weighted after it, and the rejections are
+grouped on screen by reason with counts and examples. The panel also prints the
+**divergence table**: this product is #2 by substitution and #17 by similarity, and the two
+rankings disagreeing is the whole point of having both.
+
+Per-size stock is derived from a hash of `productId:size` taken *outside* the catalog RNG
+stream, so it is stable across renders and across a market rebuild without being stored.
+
+A substituted line in the cart is attributed separately from a recommended one:
+**revenue the store *kept*, not revenue a recommendation *created*.** Counting a swap as
+incremental is the easiest way to make a personalization number look good and the fastest
+way to lose the room when somebody checks.
+
+### 5.3 Every merchandising badge carries the statistic behind it
+
+Hover any badge — Low Stock, Pre-Order, a sale chip, a market flag — and a panel gives four
+lines: **the rule** that placed it, **the statistic** it rests on, **the cohort** that
+statistic was measured over with its share as a bar, and **the basis** of the measurement.
+
+A badge is otherwise a sticker. This makes each one a claim with a population behind it,
+and it is the cheapest way to show a merchandising team that the flags on their grid could
+be accountable.
+
+---
+
+## 6. The engines
+
+Everything in `src/ml/` — the three scoring engines below, plus the query engine (§4.1)
+and the Recommended ranker (§4.5). None of them has a React or DOM dependency, so they
 run from the command line under `tsx`, which is how the evaluation harness works.
 
 The three below are the ones the offline harness scores, because they are the three that
@@ -364,7 +524,7 @@ to a $30 cap.
 
 ---
 
-## 5. The Recommendation Lab
+## 7. The Recommendation Lab
 
 A sandbox for the technical audience — the screen where a client data scientist can try
 to break it.
@@ -395,7 +555,7 @@ argument.
 
 ---
 
-## 6. The simulated world
+## 8. The simulated world
 
 `src/sim/` — deterministic, seeded, no React, no DOM.
 
@@ -461,7 +621,7 @@ no external asset dependency and works with the network unplugged.
 
 ---
 
-## 7. The world has a clock
+## 9. The world has a clock
 
 Until now the simulated world was a still photograph. It had a date baked into it —
 September, mid-NFL-season — but that date was a frozen constant in the taxonomy, and
@@ -571,7 +731,247 @@ clock the demand multipliers are exactly 1 and the event pass returns its input 
 
 ---
 
-## 8. Effort, not money
+## 10. Refusal, made as visible as recommendation
+
+A recommender is usually judged on what it puts on the screen. The harder half of the job
+is what it keeps off, and that half is invisible by construction: a rail that showed six
+things and a rail that refused two and showed four look identical from the shopper's
+chair. A store whose only account of what it withheld lives in a developer console has not
+actually told anyone anything.
+
+So suppression here is a **gate, not a ranker** — a separate module, `src/ml/suppression.ts`,
+that runs after retrieval and before presentation, and every refusal it makes is written
+down in three places at three levels of detail.
+
+### The four rules, in the order they fire
+
+| Rule | Fires when | What lifts it |
+|---|---|---|
+| **Already owned** | the product was bought inside a 120-day window | the subdepartment is consumable (socks, drinkware, lanyards) or outgrowable (youth and toddler sizes); or the order shipped to another address; or the shopper's gift intent is *observed* above 0.6 |
+| **Rival club** | the shopper is a confident loyalist (posterior ≥ 0.75 **and** distribution confidence ≥ 0.35) and the product belongs to a club joined to theirs by an edge above the suppression floor | no score buys a rival past this gate. The one thing that does is the shopper themselves: open a rival's own product page and the rule stands down for that club, on that surface, and says so |
+| **Shown and ignored** | the product has accumulated decayed impressions without a click | a single click clears the count outright. Below the exclusion bar the rule only *demotes*, at λ = 0.12 per prior impression |
+| **Below this slot** | the candidate's confidence is under the threshold *for the position it would occupy* | a stronger candidate behind it gets promoted into the slot instead |
+
+### The rivalry graph is stated, not learned
+
+`RIVALRIES` in `src/sim/taxonomy.ts` is four hand-written edges with an intensity and a
+label a fan would recognise — *"NFC East, the oldest grudge in the division"*. It is stated
+rather than derived on purpose, and the doc comment records the specific error the list
+exists to prevent: **the three Philadelphia clubs are affinity, not rivalry.** Any method
+that inferred rivalry from co-purchase or co-view would find that Eagles buyers also buy
+76ers gear and conclude the two are related, which they are — just not in the direction
+that would justify hiding one from the other.
+
+One edge, Cowboys/Chiefs at 0.24, sits deliberately **below** the 0.5 suppression floor and
+is kept in the list so the Profile tab can show the rule declining to fire. A rivalry graph
+whose every edge fires is not a graph; it is a list of other teams.
+
+### The rule that declines is shown declining
+
+The rivalry rule is the only one in the gate that can decide *not* to act, and the only one
+whose absence a shopper would notice. Both facts argue for the same thing: it has to be
+visible when it stands down.
+
+It stands down when the shopper opens a rival's own product page. They asked for that club by
+name, and a store that answers a direct request by hiding what was asked for is not being
+careful, it is being obtuse. The stand-down is narrow — it releases *that* club on *that*
+surface, and the rule keeps holding every other rival on every store-chosen slot — and it is
+announced everywhere the gate is announced: on the storefront ("Showing Cowboys anyway. We
+usually keep Cowboys out of your rows because you shop Eagles, but you opened this one"), in
+the Decisions tab as its own row, and in the decision reading as a *passed* rule labelled
+**Rival club — stood down**. A beat whose only decision was to stand down is still written to
+the journal and still rendered — with the count suppressed, because "Withheld — 0 items"
+would read as a rule that had nothing to say.
+
+The measured effect: the empty-rail rate on the similar-items rail fell from 41.9% to 6.3%,
+without weakening the rule anywhere the *store* chose what to show.
+
+**The homepage trending rail exists so the rule has a surface at all.** Every other rail is
+either filtered to the shopper's club or anchored on a product they opened, so before it there
+was nowhere in the storefront a rival's merchandise could reach a loyalist. "Trending across
+the leagues" draws the top 50 bestsellers across every club, and for the Eagles loyalist the
+gate refuses 45 of them — 44 to the rivalry rule and one already owned — filling five of the
+eight tiles and leaving three empty. That is the correct outcome and the rail says so: there
+is no eighth cross-league bestseller a confident Eagles fan should be shown, and a backfill
+that reached further down the popularity list to avoid an empty tile would be the gate
+overruling itself to protect the layout.
+
+### Both loyalist floors are pinned to named shoppers
+
+The rivalry rule is gated on the shopper being a *confident* loyalist, which is a pair of
+numbers, and the first draft picked both by eye — 0.55 posterior and 0.6 confidence. The
+second was on the wrong scale entirely. `distConfidence` is a product of three sub-unit terms,
+so 0.6 sits near its practical ceiling; no shopper in the demo ever reached it, and the
+rivalry rule could not fire for anyone. Measured across all five identity rungs:
+
+| Scenario | Posterior | Confidence | |
+|---|---|---|---|
+| Returning Eagles fan | 0.796 – 0.883 | 0.363 – 0.817 | admitted |
+| Hot-market shopper | 0.920 – 0.983 | 0.595 – 0.925 | admitted |
+| Anonymous visitor | 0.712 | 0.263 | refused |
+| Multi-team shopper | 0.458 – 0.639 | 0.221 – 0.544 | refused |
+| Low-confidence shopper | 0.415 – 0.565 | 0.169 – 0.369 | refused |
+
+**0.75 / 0.35** is the only pair that admits the two loyalists and refuses the other three,
+and a test asserts exactly that — scenario by scenario, at every rung of the identity ladder —
+so moving either number fails against a named shopper rather than against a hunch.
+
+The same discipline caught the fatigue constant. At λ = 0.45 a single prior impression
+multiplied a candidate's score by 0.64, which dropped it under the slot threshold: the
+*demotion* rule was silently doing the work of an *exclusion* rule, and fatigue's own
+exclusion never got to be the thing that removed anything. λ = 0.12 keeps the demotion a
+demotion.
+
+### Thresholds belong to the slot, not to the candidate
+
+`SURFACE_POLICIES` gives every surface a lead threshold, a tail threshold, **the engine whose
+score those two numbers are denominated in**, and a written rationale that the panel renders
+verbatim:
+
+| Surface | Slots | Lead → tail | Scale |
+|---|---|---|---|
+| Homepage hero | 1 | 0.72 | intent posterior |
+| Homepage carousel | 8 | 0.90 → 0.72 | catalog popularity |
+| Similar items | 4 | 0.85 → 0.65 | cosine similarity |
+| Complete the look | 4 | 0.25 → 0.08 | co-order conditional |
+| Cart cross-sell | 3 | 0.35 → 0.15 | co-order conditional |
+
+**Read every row through its own scale and never across rows.** A cosine, a co-order
+conditional and a softmax posterior all live in [0,1] and have nothing else in common: 0.25
+on the complement scale is a *stricter* ask than 0.85 on the cosine, because the co-order
+conditional has a median of 0.24 and the cosine a median of 0.86. This is not a caveat added
+after the fact — it is the defect that shipped in the first draft of this table. `pdp_similar`
+at 0.45 sat below the floor of its own engine, a gate that could never fire; `pdp_complement`
+at 0.50 sat above the 90th percentile of its own engine and refused every candidate it was
+ever handed, an empty rail for every shopper on every product. Two opposite failures, both
+invisible without measuring, both shipped in the same commit. The `scale` field and
+`SCALE_RANGE` exist so the next person can check the numbers instead of trusting them, and a
+test now refuses any policy that sets a bar its own engine cannot clear — or one it always
+clears. The thresholds above are set from measured empty rates: 6.1% on the similar rail,
+6.3% on complements, 15.3% in the cart.
+
+The hero is one slot, first on the page, and it makes a categorical claim in a club's
+colours across the full width of the screen: *you are an Eagles fan*. Getting that wrong is
+not a slightly worse recommendation, it is the store telling a Cowboys fan who they are.
+The fourth tile of a carousel makes no such claim and is allowed to be a guess. On the
+Anonymous scenario the banner drops its colours and says so, naming the read and the bar it
+missed, while the carousel underneath keeps personalizing.
+
+A refusal **does not consume a slot**. The next candidate is promoted into it and has to
+clear *that* slot's bar in turn, which is why retrieval over-fetches — the rails ask for
+eight and show four. A gate placed after a retrieval that returns exactly enough has only
+one move available to it, leaving a hole, so every refusal would read on screen as a broken
+rail rather than as a decision.
+
+### Three audiences, three amounts of detail
+
+- **The shopper** gets a line under the rail naming the *rule*: "3 items left out of this
+  row — rival club merchandise and things you bought recently." It never names the
+  products. Naming them would undo the refusal — *"we did not show you the Cowboys jersey"*
+  is showing you the Cowboys jersey — and for the ownership rule it is worse than that,
+  because the one case where a person buys the same thing twice is usually the case where
+  they did not want the first one mentioned out loud.
+- **The merchandiser** gets the Decisions tab, which names the SKU, the rule, the reason and
+  which slot went unfilled, because this is the screen where "why did you never show me
+  that" gets an answer that can be argued with.
+- **The evaluator** gets the Recommendation Lab, where the gate is a funnel stage with a
+  tickbox. Untick it and the suppressed candidates come back — they scored well the whole
+  time, which is the point. It is the only stage on that screen whose value is visible
+  solely by removing it.
+
+### Every refusal is an entry in the effort ledger
+
+A withheld impression is the one saving in this build that leaves nothing on screen to
+point at, which is exactly why it has to be counted. `suppressionEffort` writes each fired
+gate to the ledger as `suppressed_impression` — priced, like everything else there, at a
+stated benchmark of three seconds and no click, with the count real and the conversion
+labelled. The entry distinguishes slots that were backfilled from slots left empty.
+
+### One bug worth recording
+
+The gift-intent exception originally read `giftIntent >= 0.45`. An unobserved scalar trait
+in this codebase starts at the 0.5 midpoint, and `createProfile` is explicit that this means
+*not yet observed* rather than *average shopper*. The effect was that every cold visitor
+read as a gift buyer and the ownership rule could never fire for anyone the system had not
+already watched. It took a failing test to surface, and the fix needed two changes rather
+than one: gate the value behind `giftIntent.evidence > 0`, and raise the constant to 0.6 so
+that even an *observed* midpoint does not lift the rule. This is the same "null is not zero"
+discipline that makes the Experience tab print **Not measured** rather than 0%.
+
+---
+
+## 11. Lifecycle triggers — the same discipline, off-site
+
+Everything up to here happens while the shopper is standing there. This screen is the half
+that runs after they leave, into a channel they did not ask to be in, where a bad decision
+costs a great deal more than a badly ordered carousel does.
+
+Seven triggers are evaluated against the live session, each through six gates.
+
+### 11.1 The held messages are the point
+
+A CRM screen that lists what fired can be built in an afternoon and answers nothing. The
+question a client asks is *"what stops it sending"*, so every trigger shows its **whole
+gate walk** — in order, with verdicts, **including the rules that passed**. A rule you
+cannot watch pass is a rule you cannot trust is there.
+
+| Gate | What it enforces |
+| --- | --- |
+| **Condition** | The trigger's own rule, in the words a CRM manager would write it |
+| **Consent / rung** | Email needs `identified`; SMS needs `member` |
+| **Holdout** | A 10% control arm, assigned by hash of the visitor id |
+| **Quiet hours** | Per channel, in the visitor's own local time |
+| **Frequency cap** | Email 2 per 24h; SMS 1 per 72h |
+| **Content** | The same suppression gate the on-site rails use |
+
+**SMS is gated at `member`, not `identified`** — because that is the only rung where a
+verified mobile number lives. A demo that texts a cookie is describing a compliance
+incident.
+
+The holdout is assigned by a hash of the id rather than a coin flip, for the same reason
+per-size stock is: **a holdout that moves between two paints is not a holdout.**
+
+Quiet hours are per channel and deliberately asymmetric — email 06:00–23:00, SMS
+09:00–20:00. Email waits in an inbox; SMS makes a noise.
+
+### 11.2 The content bar is the highest in the build
+
+The two off-site surfaces run through `applySuppression` at their own policies, and both
+sit above every on-site rail. The email policy asks its lead slot for a top-decile seller —
+a harder ask than any carousel makes of the same engine.
+
+The rationale is written into the policy and rendered verbatim: four product slots in a
+message the shopper did not ask for, opened hours after the session that triggered it. The
+evidence has aged, and **the shopper cannot scroll past a bad pick to a good one.**
+
+Where the bar cannot be met, **slots are left empty rather than backfilled**. Backfilling
+below the bar would be the gate quietly disagreeing with itself.
+
+### 11.3 What is session, what is CRM, and the screen says which
+
+The cart, the views, the size the shopper could not have and the club they read as are all
+folded out of the live session and are not editable.
+
+Three facts are **not things a browser holds** — the visitor's local hour, how many
+messages the programme has already sent in the current window, and when the last session
+ended. Those are presented as controls, explicitly labelled as CRM state, so the gates can
+be *demonstrated* rather than described. Move the hour slider into the small hours and the
+verdicts change live.
+
+One derivation worth naming: the "your size is back" trigger reads its size from the same
+`predictFit` the product page prefilled with, and its availability from the same
+`needsSubstitute` the product page refused with. It could have kept its own list. It does
+not, because a second list is a list that will eventually disagree with the page.
+
+Held messages are written to the effort ledger as **impressions the shopper did not have to
+sort through** — priced at the same rate as a suppressed on-site impression, because the
+alternative is to invent a number for what an unwanted message costs a person.
+
+**Nothing is sent.** There is no CRM behind this build and no address to send to.
+
+---
+
+## 12. Effort, not money
 
 Every claim in the previous seven sections is about accuracy. Accuracy is not the argument
 a shopper cares about, and it is not the argument a room full of executives can check. So
@@ -585,7 +985,7 @@ was removed rather than relocated. A made-up revenue figure sitting next to a pa
 arithmetic devalues the arithmetic — it is the number a client repeats to someone who will
 check it, and it is the one number here nobody could.
 
-### 8.1 The twin store race
+### 12.1 The twin store race
 
 **Deep Dive → Twin Store Race.** Two storefronts side by side. Left is ranked by the intent
 engine. Right is ranked by sales volume, which is genuinely what this storefront serves with
@@ -622,7 +1022,7 @@ The upset label is computed from the traces on screen, not written by hand, and 
 population rate is on the record below: the control arm reaches the target first in about
 5% of races. A race the personalized side always wins is a race nobody believes.
 
-### 8.2 Population effort metrics
+### 12.2 Population effort metrics
 
 `npm run sim:effort`. Its own script, deliberately separate from `sim:eval` so the accuracy
 harness does not get slower. Paired arms, same shoppers and same seeds in both, over 6,000
@@ -648,7 +1048,7 @@ upsets: control arm reached the target sooner in 5.3% of races
 `<-` personalized ahead · `!!` **control ahead** · `~` not separated from zero.
 
 **These are counts of shopper effort in a simulated world**, labelled exactly as the offline
-accuracy metrics in §9 are labelled. They are not measurements of human beings.
+accuracy metrics in §14 are labelled. They are not measurements of human beings.
 
 Three rows need reading together rather than quoting alone, and the CLI says so on screen:
 
@@ -663,7 +1063,7 @@ Three rows need reading together rather than quoting alone, and the CLI says so 
 - **The confidence gate** row is a single-arm diagnostic, not a paired comparison. It
   withheld on 15.8% of sessions and was right to withhold on 70.8% of those.
 
-### 8.3 The per-session effort ledger
+### 12.3 The per-session effort ledger
 
 **Intelligence panel → Experience.** The tab shipped empty and said so. It is instrumented
 now, and every row in it was emitted by a storefront surface that actually made the decision
@@ -708,7 +1108,7 @@ moved nothing produces no row, a decision that went the wrong way produces a cos
 are counted as rows of scrolling rather than raw slots, and the un-personalized column is
 exactly the sum of the paired diffs.
 
-### 8.4 What building it caught
+### 12.4 What building it caught
 
 The first version of the harness had the control arm winning almost every row. That is a
 signal to audit the setup, not a finding to publish, and three separate methodological bugs
@@ -727,7 +1127,54 @@ came out of the audit — each now documented in-code at the site of the decisio
 
 ---
 
-## 9. Offline results
+## 13. The model registry
+
+Eleven models, one table, and four columns that are usually missing from a model inventory.
+
+| Column | What it holds |
+| --- | --- |
+| **Writes** | The profile field this model *owns* |
+| **Decay** | The λ on that field, with its half-life in events |
+| **Activation** | The bar it must clear, and the distribution that bar lives in |
+| **Metric** | Read live from the offline harness — or why there is none |
+| **Last fired** | The step in *this* session where it last ran |
+
+Each earns its place:
+
+**Writes.** Several cards say *nothing*, and that is the point. A retrieval engine reads
+the profile and writes none of it. A registry that implies otherwise is how two models end
+up fighting over one field.
+
+**Decay.** A model that writes a field and does not state its decay has not said how long
+its evidence is good for.
+
+**Metric.** Read on demand rather than baked in at build time. **A table of numbers shipped
+in a file is not evidence; one a reviewer can re-run at a different sample size is.** Four
+cards have no metric, and each states *why* — because "no number" and "we did not look" are
+different admissions and the column must not blur them.
+
+**Last fired.** Six models appear in the decision journal as their own beat. The four
+gate-family models do not, by design — they are reported through the surface they acted on.
+They still leave a trace: each writes to the effort ledger when it fires. So `lastFiredFor`
+reads **two sources and returns one shape**, joined on the event id so both report the same
+step number. One definition, one function — rather than a journal answer for six cards and
+an improvised answer for the other four. Two of the four write the same ledger kind and are
+disambiguated by surface, and there is a test pinning it.
+
+**Nothing on this screen is a second copy of a number.** The activation column pulls
+`CONFIDENCE_THRESHOLD` out of `ml/intent`, the surface bars out of `SURFACE_POLICIES`, the
+prefill floor out of `ml/fit`. A registry that keeps its own copy of the thresholds is a
+document, and documents drift. If somebody moves a bar, this screen moves with it or the
+build fails.
+
+**Rows expand to the live feature vector** — the actual values the model is reading out of
+the profile at that instant, each with the dotted path it came from. Not a schema. The
+values. Open the screen in a second window, click through the storefront in the first, and
+they move.
+
+---
+
+## 14. Offline results
 
 Run `npm run sim:eval`.
 
@@ -820,17 +1267,21 @@ accuracy.**
 
 ---
 
-## 10. How it is built
+## 15. How it is built
 
-React 19 + TypeScript (strict) + Tailwind CSS 4 + Vite 6. ~11,300 lines. No backend, no
-API key, no network call at runtime.
+React 19 + TypeScript (strict) + Tailwind CSS 4 + Vite 6. ~32,600 lines, of which ~15,300
+are engine and simulator code with no browser dependency at all. No backend, no API key, no
+network call at runtime.
 
 ```
 src/
   sim/           The simulated world: taxonomy, catalog generator, population
                  and behaviour model, seeded RNG. Deterministic.
-  ml/            The engines: intent, similarity, complement, shared embeddings,
-                 the session journal, and the offline evaluation harness.
+  ml/            22 modules behind one facade (engine.ts): the profile fold and
+                 identity ladder, intent, similarity, complement, ranking, query
+                 interpretation, suppression, fit, substitution, badges, lifecycle,
+                 the effort ledger, the model registry, the decision journal, and
+                 the offline evaluation harness.
   components/
     storefront/    The shopping experience
     intelligence/  Explanation, evidence, architecture and partnership screens
@@ -840,6 +1291,10 @@ src/
                    and the collapsible deep-dive rail
   context/       Single app store; engine calls are memoised on their inputs.
 ```
+
+**React imports from `engine.ts` and nowhere else.** One facade means a component cannot
+reach past it into a module's internals, and the boundary that makes `src/ml` liftable is
+enforced by the import graph rather than by convention.
 
 `src/sim` and `src/ml` have **no React and no DOM dependency**. That is not tidiness for
 its own sake — it is what makes the evaluation harness possible and what would make these
@@ -852,8 +1307,12 @@ Recharts is lazy-loaded, so the storefront's first paint does not carry half the
 | `npm run dev` | Dev server on :3000 |
 | `npm run build` | Production build |
 | `npm run lint` | `tsc --noEmit` |
+| `npm test` | 153 unit tests across 12 files, under `tsx` — no browser |
 | `npm run sim:inspect` | Print catalog and simulation statistics |
 | `npm run sim:eval` | Run the offline evaluation harness |
+| `npm run sim:effort` | Population-level effort metrics with bootstrap intervals |
+| `npm run sim:market` | Measure a market event's effect on the simulated world |
+| `npm run sim:imagery` | Check every product resolves to a drawn asset |
 | `npm run build:single` | Single-file build, for handing the demo off on a USB stick |
 
 ### Design system
@@ -869,20 +1328,25 @@ our instrumentation of it.
 
 ---
 
-## 11. Who this is for
+## 16. Who this is for
 
 | Audience | What to show them |
 | --- | --- |
 | **Client leadership** | The storefront with the ON/OFF switch, the shopper-scenario pills, and and the Twin Store Race. Five minutes, no jargon, no ROI slide. |
-| **Client data science / engineering** | Model Intelligence, the Recommendation Lab, Model Evidence, and System Architecture. Invite them to try to break the Lab. |
+| **Client data science / engineering** | The Model Registry, the Recommendation Lab with the gate pushed until the rail empties, Model Evidence including the department-intent admission, and System Architecture. Invite them to try to break the Lab. |
+| **Client CRM / lifecycle marketing** | Lifecycle Triggers. Move the hour slider and the frequency caps and watch the gates change their verdicts. |
 | **Internal (Straive)** | A reusable capability asset. The `sim/` and `ml/` layers are client-agnostic; the taxonomy is one file. |
+
+**`DEMO.md` holds two scripted paths — five minutes for a business audience and fifteen for
+a technical one — timed, keystroke by keystroke, with a ranked cut-list for when you are
+running short.**
 
 The client name is fictional throughout — ProSports — and the engines are named for what
 they do (Intent, Similarity, Complement) rather than for any product.
 
 ---
 
-## 12. What it deliberately does not do
+## 17. What it deliberately does not do
 
 - **No ROI calculator.** There was one; it was deleted. It was the only screen with no
   model behind it, and a made-up revenue figure next to nine screens of real arithmetic
@@ -892,13 +1356,18 @@ they do (Intent, Similarity, Complement) rather than for any product.
   shown, with the reason.
 - **No stock imagery, no external fonts-as-images, no API keys.** Unplug the network and
   it still runs.
+- **No message is sent, and no address exists.** The lifecycle screen evaluates and shows;
+  there is no CRM behind it.
+- **No effort figure converts to money.** The counts are real and paired at the moment of
+  decision; the per-action seconds are labelled benchmarks, because a click is countable
+  and the seconds it costs a person are not something this demo has measured.
 - **No spell correction, embeddings or learned synonyms in search.** The taxonomy is the
   universe the query engine can map onto, and it says so. None of the three can be shown
   honestly without query logs, and this world has none.
 
 ---
 
-## 13. Where it goes next
+## 18. Where it goes next
 
 The prototype is complete as a prototype. Turning it into a system means, in rough order:
 
@@ -913,6 +1382,12 @@ The prototype is complete as a prototype. Turning it into a system means, in rou
    already the natural place to log from.
 5. **Extend the taxonomy.** Six clubs and eight departments is a demo; the generator is
    parameterised.
+6. **Point the lifecycle gates at a real ESP.** The gates, the priority ordering, the
+   holdout and the caps are already the hard part; what is missing is a send adapter and a
+   consent record to read instead of a control.
+7. **Make the registry the deployment surface.** It already states every threshold, decay
+   constant and offline metric in one place, read from the modules that enforce them. In a
+   real system that is where a model version gets promoted or rolled back.
 
 ---
 

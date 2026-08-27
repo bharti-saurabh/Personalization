@@ -1,12 +1,17 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ProductCard } from './ProductCard';
 import { ProductImage } from './ProductImage';
+import { PlayersRail } from './PlayersRail';
+import { PriceFraming, GiftingRail } from './OfferAndGifting';
+import { ExplainMarker } from './ExplainMarker';
 import { Sparkles, ArrowRight, TrendingUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import { TeamId, Department } from '../../types';
 import { TEAM_IDS, TEAM_BY_ID, DEPARTMENT_IDS } from '../../sim/taxonomy';
 import { TeamCrest, LeagueBadge, DeptGlyph } from '../brand/Identity';
 import { rankMove } from '../../ml/effort';
+import { SURFACE_POLICIES, applySuppression } from '../../ml/engine';
+import { WithheldNotice } from './WithheldNotice';
 
 export const StorefrontHome: React.FC = () => {
   const {
@@ -22,11 +27,12 @@ export const StorefrontHome: React.FC = () => {
     recordEvent,
     recordEffort,
     userEvents,
+    suppressionCtx,
+    reportSuppression,
   } = useApp();
 
   // Primary predicted team or fallback
   const primaryTeam = (isPersonalizationOn ? activeTeamOverride || intentPrediction.teams[0]?.team || 'Eagles' : 'Eagles') as TeamId;
-  const primaryTeamProb = Math.round((intentPrediction.teams[0]?.probability || 0.7) * 100);
   const heroConfig = TEAM_BY_ID[primaryTeam];
 
   // --- The unpersonalized storefront ---------------------------------------
@@ -104,6 +110,96 @@ export const StorefrontHome: React.FC = () => {
     const from = onDept.length ? onDept : pool;
     return [...from].sort((a, b) => b.popularity - a.popularity)[0];
   }, [isPersonalizationOn, heroTeamProducts, globalBestSellers, intentPrediction]);
+
+  /**
+   * The hero has to earn the hero slot.
+   *
+   * This is the clearest case for per-surface thresholds in the whole build. The
+   * banner is one slot, it is the first thing on the page, and it makes a
+   * categorical claim - "you are an Eagles fan" - in a club's colours across the
+   * full width of the screen. Getting that wrong is not a slightly worse
+   * recommendation; it is the store telling a Cowboys fan who they are. The
+   * fourth tile of a carousel makes no such claim and can be wrong quietly, so
+   * it is allowed to be a guess.
+   *
+   * The bar is `SURFACE_POLICIES.hero.leadThreshold`, read from the same table
+   * every other surface reads. A local constant here would drift from the panel
+   * that documents it within a fortnight.
+   */
+  const heroGate = useMemo(() => {
+    if (!heroProduct) return null;
+    return applySuppression(
+      [
+        {
+          product: heroProduct,
+          // The hero's confidence is the CLUB read, not the product's score.
+          // What the banner is betting on is the identity, and the merchandise
+          // is only how it says so.
+          confidence: intentPrediction.teams[0]?.probability ?? 0,
+          source: 'Intent',
+        },
+      ],
+      suppressionCtx,
+      SURFACE_POLICIES.hero
+    );
+  }, [heroProduct, intentPrediction, suppressionCtx]);
+
+  // The banner is only dressed in a club's colours when the gate let it through.
+  const heroPersonalized = isPersonalizationOn && !!heroGate && heroGate.kept.length > 0;
+
+  useEffect(() => {
+    reportSuppression(heroGate);
+    return () => reportSuppression(null, SURFACE_POLICIES.hero.id);
+  }, [heroGate, reportSuppression]);
+
+  /**
+   * The trending rail, and the only place on this storefront where the rivalry
+   * rule has anything to do.
+   *
+   * WHY THIS RAIL HAD TO EXIST FOR THE RULE TO BE REAL. Every other rail here
+   * is filtered to the club the model predicted, and the two on the product
+   * page are neighbours of an anchor the shopper chose. All three are
+   * single-club pools by construction, so a rival cannot reach them and
+   * "never surface a rival's merchandise to a loyalist" was true only in the
+   * way that a rule about a thing that cannot happen is true. Trending is
+   * different: it is the store's own bestseller list, cross-club by definition,
+   * and it is exactly the surface a real merchandiser has to defend. For a
+   * confident Eagles fan, twenty-one of the store's top twenty-four sellers are
+   * Cowboys and Chiefs merchandise. Ungated, this rail hands a loyalist a wall
+   * of the two clubs they will not buy.
+   *
+   * IT IS FETCHED FIFTY DEEP FOR EIGHT SLOTS. A gate placed after a retrieval
+   * that returns exactly enough can only leave a hole, and on this rail the
+   * hole is most of the rail - so the over-fetch here is far larger than the
+   * 8-for-4 the product page uses.
+   *
+   * The confidence is popularity on a 0..1 scale, which is what
+   * `SURFACE_POLICIES.home_carousel.scale` names. Dividing by a hundred here
+   * rather than storing it that way keeps the catalog's own field readable.
+   */
+  const TRENDING_DEPTH = 50;
+  const trendingCandidates = useMemo(
+    () =>
+      globalBestSellers
+        .filter((p) => p.inventoryStatus !== 'Pre-Order')
+        .slice(0, TRENDING_DEPTH)
+        .map((product) => ({
+          product,
+          confidence: product.popularity / 100,
+          source: 'Bestsellers',
+        })),
+    [globalBestSellers]
+  );
+
+  const trendingGate = useMemo(
+    () => applySuppression(trendingCandidates, suppressionCtx, SURFACE_POLICIES.home_carousel),
+    [trendingCandidates, suppressionCtx]
+  );
+
+  useEffect(() => {
+    reportSuppression(trendingGate);
+    return () => reportSuppression(null, SURFACE_POLICIES.home_carousel.id);
+  }, [trendingGate, reportSuppression]);
 
   /*
    * THE EFFORT LEDGER IS WRITTEN ON CLICK, NOT ON RENDER, and the reason is
@@ -183,41 +279,51 @@ export const StorefrontHome: React.FC = () => {
       {/* colours and shows that club's bestselling piece - so the difference  */}
       {/* the model makes is visible before a single number is read.          */}
       {/* ------------------------------------------------------------------ */}
-      <section className="px-4 sm:px-6 pt-4">
+      <section className="px-4 sm:px-6 pt-4" data-module="hero">
         <div
           className="relative overflow-hidden rounded-3xl text-white shadow-xl"
           style={{
-            background: isPersonalizationOn && heroConfig
+            background: heroPersonalized && heroConfig
               ? `linear-gradient(115deg, ${heroConfig.primaryColor} 0%, #0f0e16 62%)`
               : 'linear-gradient(115deg, #262432 0%, #0f0e16 62%)',
           }}
         >
+          <ExplainMarker id="hero" className="top-3 right-3" />
+
           {/* Oversized ghost crest, bled off the right edge. */}
-          {isPersonalizationOn && (
+          {heroPersonalized && (
             <div className="absolute -right-16 -top-16 opacity-[0.08] pointer-events-none select-none">
               <TeamCrest team={primaryTeam} size="lg" className="h-72! w-auto!" />
             </div>
           )}
           <div
             className="absolute -left-24 -bottom-32 h-80 w-80 rounded-full blur-3xl pointer-events-none"
-            style={{ background: isPersonalizationOn && heroConfig ? `${heroConfig.secondaryColor}33` : '#ffffff10' }}
+            style={{ background: heroPersonalized && heroConfig ? `${heroConfig.secondaryColor}33` : '#ffffff10' }}
           />
 
           <div className="relative z-10 flex items-center gap-6 p-6 sm:p-8">
             <div className="min-w-0 flex-1">
-              {isPersonalizationOn ? (
+              {/* Retail voice only. This ribbon used to read "Personalized for
+                  you · 90% predicted intent", which is the site telling the
+                  shopper its own posterior. A store says which shop you are in;
+                  it does not publish how sure it is that you belong there. The
+                  three states still differ, they just differ the way a real
+                  banner would: the club's own shop, the season's shop, or the
+                  standard front page. The confidence, the threshold and the
+                  stand-down all still exist and are all in the rail. */}
+              {heroPersonalized ? (
                 <span className="inline-flex items-center gap-1.5 bg-white/12 backdrop-blur border border-white/20 text-[11px] font-bold px-3 py-1 rounded-full mb-3">
                   <Sparkles className="h-3 w-3 text-straive-300" />
-                  Personalized for you · {primaryTeamProb}% predicted intent
+                  Your team shop
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 bg-white/8 border border-white/15 text-slate-300 text-[11px] font-semibold px-3 py-1 rounded-full mb-3">
-                  Standard experience · personalization off
+                  New season, new kits
                 </span>
               )}
 
               <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight leading-[0.95] mb-2.5">
-                {isPersonalizationOn ? (
+                {heroPersonalized ? (
                   <>
                     Gear up for
                     <br />
@@ -234,7 +340,7 @@ export const StorefrontHome: React.FC = () => {
               </h1>
 
               <p className="text-slate-300 text-[13px] max-w-md leading-relaxed">
-                {isPersonalizationOn
+                {heroPersonalized
                   ? `Authentic ${primaryTeam} jerseys, sideline caps and locker-room fleece, ranked for how you shop.`
                   : 'Bestselling jerseys, caps and gear across the NFL, NBA and MLB.'}
               </p>
@@ -242,15 +348,15 @@ export const StorefrontHome: React.FC = () => {
               <div className="flex items-center gap-3 mt-5">
                 <button
                   onClick={() => {
-                    if (isPersonalizationOn) setActiveTeamOverride(primaryTeam);
+                    if (heroPersonalized) setActiveTeamOverride(primaryTeam);
                     setStorefrontPage('plp');
                   }}
                   className="bg-white text-slate-900 hover:bg-slate-100 font-bold px-5 py-2.5 rounded-full text-[13px] shadow-lg flex items-center gap-2 transition-all active:scale-95"
                 >
-                  {isPersonalizationOn ? `Shop the ${primaryTeam} store` : 'Browse all merchandise'}
+                  {heroPersonalized ? `Shop the ${primaryTeam} store` : 'Browse all merchandise'}
                   <ArrowRight className="h-4 w-4" />
                 </button>
-                {isPersonalizationOn && heroConfig && <LeagueBadge league={heroConfig.league} className="py-1!" />}
+                {heroPersonalized && heroConfig && <LeagueBadge league={heroConfig.league} className="py-1!" />}
               </div>
             </div>
 
@@ -278,14 +384,15 @@ export const StorefrontHome: React.FC = () => {
       </section>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Clubs. A crest in the club's own colours, plus the posterior drawn   */}
-      {/* as a bar - six rows of bold text all looked the same.                */}
+      {/* Clubs. A crest in the club's own colours. The posterior used to be   */}
+      {/* drawn as a bar under each card with "90% predicted" beneath it,      */}
+      {/* which is a scoring readout on a shop front. The ORDER is the model    */}
+      {/* output; a shopper reads order without being told it is a ranking, and */}
+      {/* the numbers behind it are one tab away in the rail.                  */}
       {/* ------------------------------------------------------------------ */}
-      <section className="px-4 sm:px-6 mt-7">
-        <SectionHead
-          title={isPersonalizationOn ? 'Your teams' : 'Popular teams'}
-          note={isPersonalizationOn ? 'Ranked by predicted club affinity' : 'Ranked by national market size'}
-        />
+      <section className="relative px-4 sm:px-6 mt-7" data-module="teams-ladder">
+        <ExplainMarker id="teams-ladder" className="top-0 right-5" />
+        <SectionHead title={isPersonalizationOn ? 'Your teams' : 'Popular teams'} />
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           {teamRows.map((tItem, idx) => {
@@ -324,33 +431,24 @@ export const StorefrontHome: React.FC = () => {
                   </div>
                 </div>
 
-                {tItem.probability !== null ? (
-                  <div className="mt-2.5">
-                    <div className={`h-1 w-full rounded-full overflow-hidden ${isSelected ? 'bg-white/25' : 'bg-slate-100'}`}>
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${isSelected ? 'bg-white' : 'bg-slate-400'}`}
-                        style={{ width: `${Math.max(3, Math.round(tItem.probability * 100))}%` }}
-                      />
-                    </div>
-                    <div className={`mt-1 text-[10px] font-mono font-bold ${isSelected ? 'text-white/90' : 'text-slate-500'}`}>
-                      {Math.round(tItem.probability * 100)}% predicted
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-2.5 text-[10px] font-semibold text-slate-400">{cfg?.league}</div>
-                )}
+                <div className={`mt-2.5 text-[10px] font-semibold ${isSelected ? 'text-white/70' : 'text-slate-400'}`}>
+                  {cfg?.league}
+                </div>
               </button>
             );
           })}
         </div>
       </section>
 
+      {/* Players. New in this layout: the topPlayer slot had no surface at all,
+          which meant the highest-decay signal in the profile was being folded
+          and never spent. */}
+      <PlayersRail />
+
       {/* Departments */}
-      <section className="px-4 sm:px-6 mt-7">
-        <SectionHead
-          title={isPersonalizationOn ? 'Shop your categories' : 'Shop by category'}
-          note={isPersonalizationOn ? 'Ranked by predicted department intent' : 'A – Z'}
-        />
+      <section className="relative px-4 sm:px-6 mt-7" data-module="categories">
+        <ExplainMarker id="categories" className="top-0 right-5" />
+        <SectionHead title={isPersonalizationOn ? 'Shop your categories' : 'Shop by category'} />
 
         <div
           className="flex gap-2.5 overflow-x-auto pb-1.5 scrollbar-none"
@@ -408,8 +506,9 @@ export const StorefrontHome: React.FC = () => {
       </section>
 
       {/* Recommended grid */}
-      <section className="px-4 sm:px-6 mt-7">
-        <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-sm">
+      <section className="px-4 sm:px-6 mt-7" data-module="picked-for-you">
+        <div className="relative bg-white rounded-3xl p-5 border border-slate-200 shadow-sm">
+          <ExplainMarker id="picked-for-you" className="top-3 right-3" />
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2.5 min-w-0">
               {isPersonalizationOn ? (
@@ -423,15 +522,14 @@ export const StorefrontHome: React.FC = () => {
               )}
               <div className="min-w-0">
                 <h2 className="font-display text-[17px] font-extrabold text-slate-900 leading-tight truncate">
-                  {/* "a Eagles fan" - two of the six club names start with a
-                      vowel sound, so the article has to follow the name. */}
-                  {isPersonalizationOn
-                    ? `Picked for a${/^[AEIOU]/.test(primaryTeam) ? 'n' : ''} ${primaryTeam} fan`
-                    : 'Bestselling gear'}
+                  {/* "Picked for an Eagles fan" named the segment the model had
+                      put the shopper in, which is the site reading its own notes
+                      out loud. "Picked for you" is what a store says. */}
+                  {isPersonalizationOn ? 'Picked for you' : 'Bestselling gear'}
                 </h2>
                 <p className="text-[11px] text-slate-500 truncate">
                   {isPersonalizationOn
-                    ? 'Ranked by the intent model, then filtered to what is in stock'
+                    ? 'In stock and ready to ship'
                     : 'The same list every visitor sees, ordered by sales volume'}
                 </p>
               </div>
@@ -453,6 +551,47 @@ export const StorefrontHome: React.FC = () => {
               </div>
             ))}
           </Carousel>
+        </div>
+      </section>
+
+      {/* Trending, gated. The rail above is the club the model picked; this one
+          is the whole store, which is why it is the one that can hand a
+          loyalist their rival's shirt. The notice under it names the rule that
+          stopped that - never the products, because naming them would undo the
+          refusal. */}
+      {/* The two scalar-trait surfaces. Both stand down rather than guess, so on
+          a mid-market self-buying shopper neither of these renders at all and
+          the page below the carousel simply ends. */}
+      <GiftingRail onSelect={handleProductSelect} />
+      <PriceFraming onSelect={handleProductSelect} />
+
+      <section className="px-4 sm:px-6 mt-7 pb-2">
+        <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-2.5 min-w-0 mb-4">
+            <span className="grid place-items-center h-9 w-9 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
+              <TrendingUp className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="font-display text-[17px] font-extrabold text-slate-900 leading-tight truncate">
+                Trending across the leagues
+              </h2>
+              <p className="text-[11px] text-slate-500 truncate">
+                {trendingGate.suppressed.length > 0
+                  ? `The store's bestsellers, ${trendingGate.suppressed.length} of them held back for you`
+                  : "The store's bestsellers, every club"}
+              </p>
+            </div>
+          </div>
+
+          <Carousel>
+            {trendingGate.kept.map((c) => (
+              <div key={c.product.id} className="w-[196px] shrink-0 snap-start">
+                <ProductCard product={c.product} onSelect={handleProductSelect} />
+              </div>
+            ))}
+          </Carousel>
+
+          <WithheldNotice result={trendingGate} active={isPersonalizationOn} className="mt-3" />
         </div>
       </section>
     </div>
@@ -551,9 +690,17 @@ const Carousel: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 /** Consistent section heading: title plus the one line that says how it was ordered. */
-const SectionHead: React.FC<{ title: string; note: string }> = ({ title, note }) => (
+/**
+ * A section heading, and optionally an ordinary retail line under it.
+ *
+ * `note` is optional now because most of these captions used to explain the
+ * model - "Ranked by predicted club affinity" - and a shop does not caption its
+ * own merchandising. Where a note survives it is the kind of line a merchandiser
+ * would write. Where none is right, the heading stands alone.
+ */
+const SectionHead: React.FC<{ title: string; note?: string }> = ({ title, note }) => (
   <div className="flex items-baseline justify-between gap-3 mb-2.5">
     <h2 className="font-display text-[15px] font-extrabold text-slate-900 tracking-tight">{title}</h2>
-    <span className="text-[10.5px] text-slate-400 font-medium truncate">{note}</span>
+    {note && <span className="text-[10.5px] text-slate-400 font-medium truncate">{note}</span>}
   </div>
 );

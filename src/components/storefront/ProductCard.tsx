@@ -3,6 +3,8 @@ import { Product } from '../../types';
 import { Star, Sparkles, Flame, TrendingDown, ArrowLeftRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProductImage } from './ProductImage';
+import { BadgeExplainer, pickStat, useBadgeStats } from './BadgeExplainer';
+import { useFitPrediction } from './SizeAndFit';
 
 interface ProductCardProps {
   product: Product;
@@ -37,10 +39,39 @@ const Stars: React.FC<{ rating: number }> = ({ rating }) => {
 };
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, badgeText, badgeType }) => {
-  const { addToCart } = useApp();
+  const { addToCart, products } = useApp();
 
   const sale = product.salePrice;
   const pctOff = sale ? Math.round(((product.price - sale) / product.price) * 100) : 0;
+
+  // Every badge on this tile, with the population statistic behind it. The
+  // index is shared across all tiles rendered against the same catalog.
+  const badgeStats = useBadgeStats(product, products);
+
+  /*
+   * QUICK ADD IS A SIZE DECISION, and it used to be `addToCart(product, 'L')`.
+   *
+   * That is wrong twice over. It puts an adult apparel size on a hat, on a
+   * toddler tee and on a pennant, and it commits the shopper to a size the
+   * store has no reason to believe is theirs - on a tile that shows no size
+   * control at all, so there is nothing to correct.
+   *
+   * The tile now adds only what the fit model will defend: a prefill that
+   * cleared its own bar, in a size this product actually has. Everything else
+   * routes to the product page, where the ladder, the confidence and the
+   * reasons are on screen and the choice is the shopper's.
+   */
+  const fit = useFitPrediction(product);
+  const quickSize = fit.prefill && fit.size && fit.available ? fit.size : null;
+
+  // The market flag's own wording, kept identical to the label ml/badges.ts
+  // computes so the tooltip and the chip can never disagree. A demand CUT used
+  // to render as "Hot market", which was the wrong word for the event.
+  const marketLabel = product.movedFrom
+    ? `From ${product.movedFrom.team}`
+    : product.marketFlag && product.marketFlag.lift < 1
+      ? 'Demand cut'
+      : 'Hot market';
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 hover:border-slate-400 hover:shadow-lg transition-all duration-200 flex flex-col overflow-hidden group font-sans">
@@ -69,35 +100,38 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, bad
             who only sees the upside will over-buy.
           */}
           {product.marketFlag && (
-            <span
-              title={`${product.marketFlag.headline} — simulated market event`}
-              className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide flex items-center gap-1 max-w-[9.5rem] ${
-                product.marketFlag.lift < 1
-                  ? 'bg-slate-700 text-white'
-                  : 'bg-straive-500 text-white'
-              }`}
-            >
-              {product.movedFrom ? (
-                <ArrowLeftRight className="h-2.5 w-2.5 shrink-0" />
-              ) : product.marketFlag.lift < 1 ? (
-                <TrendingDown className="h-2.5 w-2.5 shrink-0" />
-              ) : (
-                <Flame className="h-2.5 w-2.5 shrink-0" />
-              )}
-              <span className="truncate">
-                {product.movedFrom ? `From ${product.movedFrom.team}` : 'Hot market'}
+            <BadgeExplainer stat={pickStat(badgeStats, marketLabel)}>
+              <span
+                className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide flex items-center gap-1 max-w-[9.5rem] ${
+                  product.marketFlag.lift < 1
+                    ? 'bg-slate-700 text-white'
+                    : 'bg-straive-500 text-white'
+                }`}
+              >
+                {product.movedFrom ? (
+                  <ArrowLeftRight className="h-2.5 w-2.5 shrink-0" />
+                ) : product.marketFlag.lift < 1 ? (
+                  <TrendingDown className="h-2.5 w-2.5 shrink-0" />
+                ) : (
+                  <Flame className="h-2.5 w-2.5 shrink-0" />
+                )}
+                <span className="truncate">{marketLabel}</span>
               </span>
-            </span>
+            </BadgeExplainer>
           )}
 
           {sale ? (
-            <span className="bg-red-600 text-white font-black text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide">
-              {pctOff}% OFF
-            </span>
+            <BadgeExplainer stat={pickStat(badgeStats, `${pctOff}% OFF`)}>
+              <span className="bg-red-600 text-white font-black text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide">
+                {pctOff}% OFF
+              </span>
+            </BadgeExplainer>
           ) : product.badge ? (
-            <span className="bg-slate-900 text-white font-black text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide">
-              {product.badge}
-            </span>
+            <BadgeExplainer stat={pickStat(badgeStats, product.badge)}>
+              <span className="bg-slate-900 text-white font-black text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide">
+                {product.badge}
+              </span>
+            </BadgeExplainer>
           ) : null}
 
           {badgeText && (
@@ -117,13 +151,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, bad
         </div>
 
         {product.inventoryStatus === 'Low Stock' && (
-          <span className="absolute bottom-2 left-2 z-10 bg-amber-100 text-amber-900 border border-amber-400 font-bold text-[9px] px-1.5 py-0.5 rounded uppercase">
-            Almost gone
+          <span className="absolute bottom-2 left-2 z-10">
+            <BadgeExplainer stat={pickStat(badgeStats, 'Almost gone')}>
+              <span className="bg-amber-100 text-amber-900 border border-amber-400 font-bold text-[9px] px-1.5 py-0.5 rounded uppercase">
+                Almost gone
+              </span>
+            </BadgeExplainer>
           </span>
         )}
         {product.inventoryStatus === 'Pre-Order' && (
-          <span className="absolute bottom-2 left-2 z-10 bg-slate-900 text-white font-bold text-[9px] px-1.5 py-0.5 rounded uppercase">
-            Pre-Order
+          <span className="absolute bottom-2 left-2 z-10">
+            <BadgeExplainer stat={pickStat(badgeStats, 'Pre-Order')}>
+              <span className="bg-slate-900 text-white font-bold text-[9px] px-1.5 py-0.5 rounded uppercase">
+                Pre-Order
+              </span>
+            </BadgeExplainer>
           </span>
         )}
       </div>
@@ -159,10 +201,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, bad
         </div>
 
         <button
-          onClick={() => addToCart(product, 'L')}
+          onClick={() => (quickSize ? addToCart(product, quickSize) : onSelect(product))}
+          title={
+            quickSize
+              ? `Adds size ${quickSize}, prefilled at ${(fit.confidence * 100).toFixed(0)}% confidence`
+              : 'No size we can defend for you yet. Pick one on the product page'
+          }
           className="mt-2 w-full bg-slate-900 hover:bg-red-600 text-white font-black text-[10px] uppercase tracking-widest py-2 rounded transition-colors"
         >
-          Add to Cart
+          {quickSize ? `Add ${quickSize === 'One Size' ? 'to Cart' : quickSize} to Cart` : 'Choose Size'}
         </button>
       </div>
     </div>

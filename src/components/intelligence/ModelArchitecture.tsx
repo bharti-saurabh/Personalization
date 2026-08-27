@@ -79,7 +79,7 @@ export const ModelArchitecture: React.FC = () => {
           }`}
         >
           <Activity className="h-4 w-4 animate-spin" />
-          <span>Simulation Mode: {activeSimulation ? 'ACTIVE' : 'PAUSED'}</span>
+          <span>Simulation mode: {activeSimulation ? 'active' : 'paused'}</span>
         </button>
       </div>
 

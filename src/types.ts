@@ -144,7 +144,20 @@ export interface CartItem {
   quantity: number;
   selectedSize: string;
   addedByRecommendation?: boolean;
-  recommendationSource?: 'Cross-Sell Complement' | 'Vector Similarity' | 'Intent Hero';
+  /**
+   * Which engine put this line in the basket.
+   *
+   * 'Availability Substitution' is the newest member and the odd one out: the
+   * other three are rails the shopper chose to click, while this one names a
+   * swap made because what they originally asked for could not be had. Cart
+   * attribution should be able to tell those apart - a substituted line is
+   * revenue the store KEPT rather than revenue a recommendation CREATED.
+   */
+  recommendationSource?:
+    | 'Cross-Sell Complement'
+    | 'Vector Similarity'
+    | 'Intent Hero'
+    | 'Availability Substitution';
 }
 
 export interface IntentPrediction {
@@ -198,6 +211,35 @@ export interface DecisionTrace {
   targetComponent: string;
 }
 
+/**
+ * The five top-level views, and the only thing the header segmented control
+ * knows about.
+ *
+ * Five is the whole point. The build reached eleven destinations in a left rail
+ * and the demo story got lost in the navigator: a viewer cannot hold eleven
+ * peers in mind, so they stop reading the list and follow whoever is driving.
+ * Grouping the five model screens behind one Models view and folding lifecycle
+ * into Customer journey costs one click each and buys a header a client can
+ * scan in a second.
+ */
+export type ShellView = 'storefront' | 'journey' | 'race' | 'models' | 'architecture' | 'partnership';
+
+/** Internal tabs of the Models view. Sub-navigation, never top level. */
+export type ModelsTab = 'intelligence' | 'evidence' | 'pipeline' | 'lab' | 'registry';
+
+/** Internal tabs of the Customer journey view. */
+export type JourneyTab = 'arrival' | 'timeline' | 'lifecycle';
+
+/**
+ * The old flat tab union.
+ *
+ * Kept because a dozen call sites across the storefront say
+ * `setNavigationTab('experience')` to mean "go back to the shop", and rewriting
+ * every one of them to the new shell vocabulary in the same change that moves
+ * the shell is how a refactor stops being reversible. The provider maps these
+ * onto a ShellView and a sub-tab, so there is still exactly one source of truth
+ * about which view is open.
+ */
 export type NavigationTab = 
   | 'experience'
   | 'comparison'
@@ -206,6 +248,8 @@ export type NavigationTab =
   | 'model_evidence'
   | 'pipeline'
   | 'lab'
+  | 'registry'
+  | 'lifecycle'
   | 'architecture'
   | 'straive_contribution';
 

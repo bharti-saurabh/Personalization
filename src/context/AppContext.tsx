@@ -5,6 +5,9 @@ import {
   ScenarioId,
   StorefrontPage,
   NavigationTab,
+  ShellView,
+  ModelsTab,
+  JourneyTab,
   CartItem,
   UserEvent,
   DecisionTrace,
@@ -23,7 +26,7 @@ import type { EffortEntry, EffortLedger } from '../ml/effort';
 import { interpretQuery, searchCatalog } from '../ml/query';
 import type { SearchResult } from '../ml/query';
 import type { RankingExplanation } from '../ml/ranking';
-import { buildScenarios, findAnchorProduct } from '../data/scenarios';
+import { findAnchorProduct } from '../data/scenarios';
 import { getDataset, fireMarketEvent, resetMarket, subscribeToWorld } from '../sim/dataset';
 import {
   EVENT_DECK,
@@ -39,17 +42,39 @@ import {
   runComplementEngine,
   generateDecisionTrace,
   readContext,
+  SURFACE_POLICIES,
+  applySuppression,
+  inertContext,
+  suppressionContext,
+  suppressionEffort,
+  runFacetModel,
 } from '../ml/engine';
 import type {
   CompletenessReport,
   ContextReading,
+  FacetModel,
   IdentityState,
   ProfileDelta,
+  SuppressionContext,
+  SuppressionResult,
   VisitorContext,
   VisitorProfile,
 } from '../ml/engine';
 import { useProfileStore } from './profileStore';
-import { SIMULATED_ARRIVAL, contextIsBare, readVisitorContext } from './visitorContext';
+import { clearAllProfiles } from './profileStore';
+import {
+  DEFAULT_PRESET,
+  PERSONA_PRESETS,
+  PRESET_BY_ID,
+  matchesPreset,
+  scenarioForPersona,
+} from '../state/personas';
+import type { PersonaDimensions, PersonaPreset } from '../state/personas';
+import { buildVisitorModel } from '../state/visitorModel';
+import { buildCaptureLedger, captureFromEvent } from '../state/capture';
+import type { CaptureLedger, ClientSignals, EventCapture } from '../state/capture';
+import type { VisitorModel } from '../state/visitorModel';
+import { SIMULATED_ARRIVAL, contextIsBare, readClientSignals, readVisitorContext } from './visitorContext';
 
 interface AppContextType {
   // Scenario & Settings State
@@ -60,6 +85,60 @@ interface AppContextType {
   togglePersonalization: () => void;
   showMLPanel: boolean;
   toggleMLPanel: () => void;
+
+  /* ------------------------------------------------------------ personas -- */
+
+  /** The sixteen named points in the dimension space. */
+  personaPresets: PersonaPreset[];
+  /** Which one the operator last picked. Stays set after a slider moves. */
+  personaPresetId: string;
+  /** Where the shopper actually sits now, preset or not. */
+  personaDimensions: PersonaDimensions;
+  /** True once the sliders have been moved off the named point. */
+  isCustomPersona: boolean;
+  /** Snaps the dimensions back to a preset and re-seeds the session. */
+  selectPersona: (id: string) => void;
+  /** Moves one dimension. Re-seeds shortly after the operator stops dragging. */
+  setPersonaDimension: (key: keyof PersonaDimensions, value: number) => void;
+
+  /* ------------------------------------------------------- visitor model -- */
+
+  /**
+   * What the engine believes, in the shape the rail renders.
+   *
+   * Derived from `visitorProfile` on every fold, never written to directly. A
+   * module on the stage names the slot that fed it and the rail looks it up
+   * here, which is the whole mechanism behind the Explain overlay.
+   */
+  visitorModel: VisitorModel;
+
+  /* --------------------------------------------------------------- shell -- */
+
+  shellView: ShellView;
+  setShellView: (view: ShellView) => void;
+  modelsTab: ModelsTab;
+  setModelsTab: (tab: ModelsTab) => void;
+  journeyTab: JourneyTab;
+  setJourneyTab: (tab: JourneyTab) => void;
+  /** The engine rail. Collapses to a slim edge rather than disappearing. */
+  railOpen: boolean;
+  toggleRail: () => void;
+  /**
+   * The one circumstance under which model information is allowed over the
+   * storefront: a deliberate reveal, off by default, driven from the rail.
+   */
+  explainOn: boolean;
+  toggleExplain: () => void;
+  /**
+   * Which stage module the operator is pointing at, or null.
+   *
+   * Shared rather than owned by either side, because the pointing goes both
+   * ways: clicking a marker on the shop highlights the rail row, and clicking
+   * the rail row highlights the marker. One piece of state, so the two can never
+   * both claim to be lit.
+   */
+  explainFocus: string | null;
+  setExplainFocus: (id: string | null) => void;
 
   // Navigation State
   navigationTab: NavigationTab;
@@ -89,8 +168,29 @@ interface AppContextType {
 
   // Live ML Engine Outputs
   intentPrediction: IntentResult;
+  /** What survived the gate on the similar-items rail, in rank order. */
   similarityMatches: SimilarityResult[];
+  /** What survived the gate on the complete-the-look rail, in rank order. */
   complementMatches: ComplementResult[];
+
+  // The refusal half of the same decision.
+  /** The facts the gate reads, folded once. Inert when personalization is off. */
+  suppressionCtx: SuppressionContext;
+  /** What the gate did on the surfaces this provider owns. */
+  similarityGate: SuppressionResult;
+  complementGate: SuppressionResult;
+  /** Every gate that ran on the page the shopper is currently standing on. */
+  suppressionResults: SuppressionResult[];
+  /**
+   * How a page-owned surface tells the provider what its gate did.
+   *
+   * The cart is the only caller. Its gate cannot live here because its anchor is
+   * the basket, and the provider would then be recomputing a co-order sweep for
+   * a page that is usually closed.
+   */
+  reportSuppression: (result: SuppressionResult | null, slot?: string) => void;
+  /** Records a completed order, so the ownership rule has something to read. */
+  recordPurchase: (items: { productId: string; gift?: boolean }[]) => void;
   activeDecisionTrace: DecisionTrace;
 
   /**
@@ -119,6 +219,29 @@ interface AppContextType {
   contextReading: ContextReading;
   /** True when the arrival context is invented rather than read from the browser. */
   contextIsSimulated: boolean;
+  /** Everything the browser answered when asked, read once at arrival. */
+  clientSignals: ClientSignals;
+  /**
+   * Every field held on this visitor, with how it was obtained and what it
+   * bought. The arrival half of "what do you know about me".
+   */
+  captureLedger: CaptureLedger;
+  /** What each event since arrival added to the record. Newest first. */
+  eventCaptures: EventCapture[];
+  /** Which filter this shopper reaches for, and which values inside it. */
+  facetModel: FacetModel;
+
+  /**
+   * Puts the whole demo back to the state a first-time viewer should see:
+   * opening persona, empty cart, home page, no stored profile, fresh market.
+   */
+  resetDemo: () => void;
+  /**
+   * Increments on every reset. Components holding local state that a reset
+   * should clear - an open tab, a scrubbed timeline - watch this rather than
+   * being handed a setter each.
+   */
+  resetNonce: number;
 
   /** Every field write since the profile was created, newest first. */
   deltaLog: ProfileDelta[];
@@ -204,10 +327,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [worldVersion, setWorldVersion] = useState(0);
   useEffect(() => subscribeToWorld(() => setWorldVersion((v) => v + 1)), []);
 
-  const scenarios = React.useMemo<Scenario[]>(() => buildScenarios(), [worldVersion]);
-  const [selectedScenario, setSelectedScenario] = useState<Scenario>(() => buildScenarios()[0]);
+  /**
+   * The persona, held as a preset id plus a live point in the dimension space.
+   *
+   * Both, not one. The preset id survives a slider move so the rail can still
+   * say what the operator started from, and the dimensions are the truth about
+   * what the shopper is now. `isCustomPersona` is the difference between them.
+   */
+  const [personaPresetId, setPersonaPresetId] = useState<string>(DEFAULT_PRESET.id);
+  const [personaDimensions, setPersonaDimensions] = useState<PersonaDimensions>(DEFAULT_PRESET.dimensions);
+  const preset = PRESET_BY_ID[personaPresetId] ?? DEFAULT_PRESET;
+
+  /**
+   * The scenario the current persona stands for.
+   *
+   * Recomputed whenever a slider moves, which is what makes the space feel
+   * continuous rather than like sixteen buttons wearing a costume. It is cheap:
+   * synthesising a dozen events and resolving three anchor products.
+   */
+  const selectedScenario = React.useMemo<Scenario>(
+    () => scenarioForPersona(preset, personaDimensions),
+    [preset, personaDimensions, worldVersion]
+  );
+
+  /** Every preset as a scenario, for surfaces that want to list them. */
+  const scenarios = React.useMemo<Scenario[]>(
+    () => PERSONA_PRESETS.map((x) => scenarioForPersona(x, x.dimensions)),
+    [worldVersion]
+  );
+
+  const isCustomPersona = !matchesPreset(personaDimensions, preset);
+
   const [isPersonalizationOn, setIsPersonalizationOn] = useState<boolean>(true);
   const [showMLPanel, setShowMLPanel] = useState<boolean>(true);
+  const [railOpen, setRailOpen] = useState<boolean>(true);
+  const [explainOn, setExplainOn] = useState<boolean>(false);
+  const [explainFocus, setExplainFocus] = useState<string | null>(null);
 
   /**
    * The arriving context, read once.
@@ -225,8 +380,89 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const contextIsSimulated = React.useMemo(() => contextIsBare(readVisitorContext()), []);
   const contextReading = React.useMemo(() => readContext(visitorContext), [visitorContext]);
 
-  const [navigationTab, setNavigationTab] = useState<NavigationTab>('experience');
+  /**
+   * The rest of what the browser will answer, read once at arrival.
+   *
+   * Once, deliberately. Re-reading on every render would let a row change while
+   * nobody did anything, and a capture ledger whose values drift is a capture
+   * ledger nobody reads twice.
+   */
+  const [clientSignals] = useState<ClientSignals>(() => readClientSignals());
+
+  const [shellView, setShellView] = useState<ShellView>('storefront');
+  const [modelsTab, setModelsTab] = useState<ModelsTab>('intelligence');
+  // Opens on the arrival ledger rather than the timeline: the first question an
+  // audience asks is what the store knew before they did anything, and the
+  // session timeline only makes sense once that has been answered.
+  const [journeyTab, setJourneyTab] = useState<JourneyTab>('arrival');
   const [storefrontPage, setStorefrontPage] = useState<StorefrontPage>('home');
+
+  /**
+   * The old flat tab, still reachable, now derived rather than stored.
+   *
+   * Two pieces of state that both claim to say which screen is open will drift,
+   * and the drift shows up as a header highlighting one thing while the stage
+   * renders another. So the shell view is the state and `navigationTab` is a
+   * reading of it; `setNavigationTab` writes through to the shell.
+   */
+  const navigationTab: NavigationTab =
+    shellView === 'storefront'
+      ? 'experience'
+      : shellView === 'partnership'
+        ? 'straive_contribution'
+        : shellView === 'race'
+        ? 'comparison'
+        : shellView === 'architecture'
+          ? 'architecture'
+          : shellView === 'journey'
+            ? journeyTab === 'lifecycle'
+              ? 'lifecycle'
+              : 'journey'
+            : modelsTab === 'evidence'
+              ? 'model_evidence'
+              : modelsTab === 'pipeline'
+                ? 'pipeline'
+                : modelsTab === 'lab'
+                  ? 'lab'
+                  : modelsTab === 'registry'
+                    ? 'registry'
+                    : 'model_intelligence';
+
+  const setNavigationTab = React.useCallback((tab: NavigationTab) => {
+    switch (tab) {
+      case 'experience':
+        setShellView('storefront');
+        return;
+      case 'comparison':
+        setShellView('race');
+        return;
+      case 'architecture':
+        setShellView('architecture');
+        return;
+      case 'straive_contribution':
+        setShellView('partnership');
+        return;
+      case 'journey':
+        setShellView('journey');
+        setJourneyTab('timeline');
+        return;
+      case 'lifecycle':
+        setShellView('journey');
+        setJourneyTab('lifecycle');
+        return;
+      default: {
+        const map: Record<string, ModelsTab> = {
+          model_intelligence: 'intelligence',
+          model_evidence: 'evidence',
+          pipeline: 'pipeline',
+          lab: 'lab',
+          registry: 'registry',
+        };
+        setShellView('models');
+        setModelsTab(map[tab] ?? 'intelligence');
+      }
+    }
+  }, []);
 
   // The catalog and the trained-artefact stand-ins are built once, lazily, by
   // the simulation layer. Memoising on the world version keeps that off the
@@ -250,7 +486,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
   ]);
 
-  const [userEvents, setUserEvents] = useState<UserEvent[]>(() => buildScenarios()[0].recentEvents);
+  // Seeded from the opening persona rather than from a hardcoded scenario, so
+  // the event stream and the profile fold start from the same history.
+  const [userEvents, setUserEvents] = useState<UserEvent[]>(
+    () => scenarioForPersona(DEFAULT_PRESET, DEFAULT_PRESET.dimensions).recentEvents
+  );
   const [activeTeamOverride, setActiveTeamOverride] = useState<TeamId | null>(null);
   const [activeDeptFilter, setActiveDeptFilter] = useState<string | null>(null);
   const [activeLeagueFilter, setActiveLeagueFilter] = useState<League | null>(null);
@@ -265,45 +505,96 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const prevIntentRef = useRef<IntentResult | null>(null);
   const beatSeq = useRef(0);
 
-  // Switch Scenario
-  const selectScenarioById = (id: ScenarioId) => {
-    const found = scenarios.find((s) => s.id === id);
-    if (found) {
-      setSelectedScenario(found);
-      setUserEvents(found.recentEvents);
-      setActiveTeamOverride(null);
-      setActiveDeptFilter(null);
-      setActiveLeagueFilter(null);
-      // A query belongs to the shopper who typed it. Carrying it across a
-      // persona switch would show the new shopper a results page they never
-      // asked for, ranked against a profile that is no longer theirs.
-      setSearchResult(null);
-      pendingSearch.current = null;
-      setLastRanking(null);
-      // A new persona is a new session, so the story starts over. Clearing the
-      // cursor as well makes the next beat a fresh "session opened" read rather
-      // than a delta against the previous shopper's posterior.
-      setJournal([]);
-      loggedEventId.current = null;
-      prevIntentRef.current = null;
-      // A new persona is a new session, so the effort account starts at zero
-      // too. Carrying the previous shopper's savings forward would make the
-      // ledger a running total across people, which it is not.
-      resetEffort();
-      // Anchor each scenario on a representative generated product, resolved by
-      // predicate rather than by id - catalog ids move with the generator seed.
-      if (found.id === 'hot_market') {
-        setSelectedProduct(findAnchorProduct({ team: 'Chiefs', department: 'Hats' }) ?? openingProduct);
-      } else if (found.id === 'anonymous') {
-        setSelectedProduct(openingProduct);
-        setStorefrontPage('pdp');
-      } else if (found.id === 'low_confidence') {
-        setSelectedProduct(findAnchorProduct({ team: 'Cowboys', department: 'Jerseys' }) ?? openingProduct);
-      } else {
-        setSelectedProduct(openingProduct);
-      }
-    }
+  /**
+   * Everything a change of shopper has to forget.
+   *
+   * Pulled out of the persona switch because a slider move is also a change of
+   * shopper - a smaller one, but the ledger, the journal and the search do not
+   * belong to the person who existed before it any more than they belong to the
+   * previous preset. One function so the two paths cannot diverge.
+   */
+  const resetSessionFor = (next: PersonaPreset, dims: PersonaDimensions) => {
+    setUserEvents(scenarioForPersona(next, dims).recentEvents);
+    setActiveTeamOverride(null);
+    setActiveDeptFilter(null);
+    setActiveLeagueFilter(null);
+    // A query belongs to the shopper who typed it. Carrying it across a
+    // persona switch would show the new shopper a results page they never
+    // asked for, ranked against a profile that is no longer theirs.
+    setSearchResult(null);
+    pendingSearch.current = null;
+    setLastRanking(null);
+    // A new persona is a new session, so the story starts over. Clearing the
+    // cursor as well makes the next beat a fresh "session opened" read rather
+    // than a delta against the previous shopper's posterior.
+    setJournal([]);
+    loggedEventId.current = null;
+    prevIntentRef.current = null;
+    // A new persona is a new session, so the effort account starts at zero
+    // too. Carrying the previous shopper's savings forward would make the
+    // ledger a running total across people, which it is not.
+    resetEffort();
+    // Anchor on a product the persona would plausibly have been looking at,
+    // resolved by predicate rather than by id - catalog ids move with the
+    // generator seed.
+    const anchorDept = dims.categoryBias > 0.5 ? 'Collectibles' : 'Jerseys';
+    setSelectedProduct(
+      findAnchorProduct({ team: next.teams[0] ?? 'Eagles', department: anchorDept, player: next.player }) ??
+        findAnchorProduct({ team: next.teams[0] ?? 'Eagles' }) ??
+        openingProduct
+    );
   };
+
+  /**
+   * The identity rung a freshly-picked persona should land on.
+   *
+   * Applied in an effect rather than here because the promotion has to replay
+   * against a profile that has already been rebuilt for the new visitor, and
+   * that rebuild happens inside the profile store on the next render.
+   */
+  const pendingIdentity = useRef<IdentityState | null>(null);
+
+  const selectPersona = (id: string) => {
+    const next = PRESET_BY_ID[id];
+    if (!next) return;
+    setPersonaPresetId(id);
+    setPersonaDimensions(next.dimensions);
+    pendingIdentity.current = next.identity;
+    resetSessionFor(next, next.dimensions);
+  };
+
+  /**
+   * Moving one slider.
+   *
+   * The dimension is written straight through so the control stays responsive,
+   * and the expensive half - re-synthesising the history and re-folding the
+   * profile - is deferred to a short timer that restarts on every move. The
+   * operator therefore sees the storefront settle when they let go rather than
+   * thrash while they drag.
+   */
+  const reseedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setPersonaDimension = (key: keyof PersonaDimensions, value: number) => {
+    setPersonaDimensions((prev) => {
+      const next = { ...prev, [key]: value };
+      if (reseedTimer.current) clearTimeout(reseedTimer.current);
+      reseedTimer.current = setTimeout(() => {
+        resetSessionFor(preset, next);
+        reseedRef.current?.();
+      }, 240);
+      return next;
+    });
+  };
+
+  /** Filled by the profile store below, for the same reason `foldEventRef` is. */
+  const reseedRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => {
+    if (reseedTimer.current) clearTimeout(reseedTimer.current);
+  }, []);
+
+  /** Kept for the surfaces that still address a shopper by scenario id. */
+  const selectScenarioById = (id: ScenarioId) => selectPersona(id as string);
 
   /**
    * The profile fold, reached through a ref.
@@ -406,10 +697,106 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     selectedScenario.recentEvents,
     activeTeamOverride,
     visitorContext,
-    'contextual'
+    'contextual',
+    // Only so a returning member's seeded order history resolves onto real SKUs.
+    // Held in a ref inside the store, so a market rebuild does not re-seed.
+    products
   );
 
   foldEventRef.current = profileStore.recordEvent;
+  reseedRef.current = profileStore.reset;
+
+  /**
+   * Lands a freshly-picked persona on its natural identity rung.
+   *
+   * Runs after the store has rebuilt for the new visitor id, so the promotion
+   * replays against the right profile. It fires once per pick: the ref is
+   * cleared on the way through, and `promoteTo` is a no-op when the rung is
+   * already correct.
+   */
+  useEffect(() => {
+    const wanted = pendingIdentity.current;
+    if (!wanted) return;
+    pendingIdentity.current = null;
+    profileStore.promoteTo(wanted);
+  }, [profileStore.profile.visitorId, profileStore.promoteTo]);
+
+  /**
+   * The visitor model: the profile in the shape the rail renders.
+   *
+   * Threaded through a ref so each build can diff against the last one and
+   * report movement. The ref is written during render rather than in an effect
+   * because the model is derived, not owned - by the time an effect ran, a
+   * consumer would already have painted the arrows against a stale baseline.
+   */
+  /**
+   * Which control this shopper reaches for.
+   *
+   * Folded from the same event stream as the profile but over a different
+   * question, and kept out of the profile on purpose: the profile is what the
+   * shopper wants, this is how they go looking for it, and the second has to be
+   * allowed to disagree with the first. The live catalog is passed so a value
+   * that no longer exists in stock cannot be offered.
+   */
+  const facetModel = React.useMemo(
+    () => runFacetModel(userEvents, profileStore.profile, products),
+    [userEvents, profileStore.profile, products]
+  );
+
+  const previousModel = useRef<VisitorModel | null>(null);
+  const visitorModel = React.useMemo(() => {
+    const built = buildVisitorModel(
+      profileStore.profile,
+      profileStore.completeness,
+      personaDimensions,
+      personaPresetId,
+      facetModel,
+      previousModel.current
+    );
+    previousModel.current = built;
+    return built;
+  }, [profileStore.profile, profileStore.completeness, personaDimensions, personaPresetId, facetModel]);
+
+  /**
+   * The capture ledger: what the store holds on this visitor and why.
+   *
+   * Rebuilt when the rung changes because the rung is what decides which rows
+   * are readable and which are withheld, and that transition is the point of
+   * the panel: promoting a shopper turns three greyed rows into live ones on
+   * screen, which is a better argument for the ladder than any diagram.
+   */
+  const captureLedger = React.useMemo(
+    () =>
+      buildCaptureLedger({
+        visitorId: profileStore.profile.visitorId,
+        context: visitorContext,
+        client: clientSignals,
+        rung: profileStore.identityState,
+        channel: contextReading.channel,
+        campaignReads: contextReading.campaignReads,
+        contextIsSimulated,
+      }),
+    [
+      profileStore.profile.visitorId,
+      profileStore.identityState,
+      visitorContext,
+      clientSignals,
+      contextReading,
+      contextIsSimulated,
+    ]
+  );
+
+  /**
+   * The progressive half. One entry per event, naming the fields that action
+   * added rather than restating the action.
+   *
+   * Positions count from the oldest event, so the number matches the beat
+   * numbering in the journal instead of counting down as the stream grows.
+   */
+  const eventCaptures = React.useMemo<EventCapture[]>(
+    () => userEvents.map((e, i) => captureFromEvent(e, userEvents.length - i)),
+    [userEvents]
+  );
 
   /**
    * The two records joined. Memoised on all three inputs because the join walks
@@ -555,15 +942,182 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const similarityMatches = React.useMemo(
-    () => runSimilarityEngine(selectedProduct, products, 4),
+  /* ---------------------------------------------------------- suppression -- */
+
+  /**
+   * The profile, folded down to the handful of facts the gate actually reads.
+   *
+   * This exists to be a DEPENDENCY, not a convenience. Four surfaces need to
+   * know what to withhold, and if each of them depended on the whole profile
+   * object then every fold - including one that only moved a posterior by a
+   * tenth of a point - would recompute four gates. This memo changes when a
+   * suppression decision could change, and at no other time.
+   *
+   * With personalization off it is inert rather than absent. The control arm of
+   * a comparison has to be a store with no gate, not a store with a gate that
+   * happens to have nothing to say.
+   */
+  const suppressionCtx = React.useMemo<SuppressionContext>(
+    () =>
+      isPersonalizationOn
+        ? suppressionContext(profileStore.profile, { personalized: true })
+        : inertContext(),
+    [profileStore.profile, isPersonalizationOn]
+  );
+
+  /**
+   * Retrieval, deliberately over-fetching.
+   *
+   * These used to ask for exactly the four items the rail shows. A gate placed
+   * after a retrieval that returns exactly enough has only one move available to
+   * it - leave a hole - so every refusal would read on screen as a broken rail
+   * rather than as a decision. Asking for twice the slots means the gate can put
+   * the next-best thing in the gap, and the empty slots that remain are the ones
+   * where nothing behind the refusal was good enough either. Those are worth
+   * showing.
+   *
+   * Deps are unchanged from before the gate: the expensive part is the co-order
+   * sweep, and it must not re-run because a profile field moved.
+   */
+  const similarityPool = React.useMemo(
+    () => runSimilarityEngine(selectedProduct, products, 8),
     [selectedProduct, products]
   );
 
-  const complementMatches = React.useMemo(
-    () => runComplementEngine(selectedProduct, products, 4),
+  const complementPool = React.useMemo(
+    () => runComplementEngine(selectedProduct, products, 8),
     [selectedProduct, products]
   );
+
+  const similarityGate = React.useMemo(
+    () =>
+      applySuppression(
+        similarityPool.map((m) => ({
+          product: m.product,
+          confidence: m.totalScore,
+          source: 'Similarity',
+        })),
+        suppressionCtx,
+        SURFACE_POLICIES.pdp_similar,
+        // The shopper chose this product. If it is a rival's, they have
+        // overridden the club read for this page and the rivalry rule stands
+        // down - see the note above `applySuppression`.
+        { anchor: selectedProduct }
+      ),
+    [similarityPool, suppressionCtx, selectedProduct]
+  );
+
+  const complementGate = React.useMemo(
+    () =>
+      applySuppression(
+        complementPool.map((m) => ({
+          product: m.product,
+          confidence: m.complementScore,
+          source: 'Complement',
+        })),
+        suppressionCtx,
+        SURFACE_POLICIES.pdp_complement,
+        { anchor: selectedProduct }
+      ),
+    [complementPool, suppressionCtx, selectedProduct]
+  );
+
+  // Back to the engines' own result objects, in the order the gate left them.
+  // The gate deals in products and confidences because it has to work the same
+  // way for every surface; the rails need the score breakdowns back, and a
+  // lookup is the cheapest way to return them without teaching the gate about
+  // four different result shapes.
+  const similarityMatches = React.useMemo(() => {
+    const by = new Map(similarityPool.map((m) => [m.product.id, m]));
+    return similarityGate.kept.map((c) => by.get(c.product.id)!).filter(Boolean);
+  }, [similarityPool, similarityGate]);
+
+  const complementMatches = React.useMemo(() => {
+    const by = new Map(complementPool.map((m) => [m.product.id, m]));
+    return complementGate.kept.map((c) => by.get(c.product.id)!).filter(Boolean);
+  }, [complementPool, complementGate]);
+
+  /**
+   * Every gate that ran this render, for the beat and the panel.
+   *
+   * The home and cart gates are not here: each runs on the page that owns it,
+   * because their anchors are that page's own business - the basket, the hero
+   * slot - and this provider has no reason to recompute either for a page that
+   * is not open. They register through `reportSuppression` below.
+   */
+  const [pageGates, setPageGates] = useState<Record<string, SuppressionResult>>({});
+  const reportSuppression = React.useCallback((r: SuppressionResult | null, slot?: string) => {
+    // A page can own more than one gate - the home page runs the hero and the
+    // trending rail - so registrations are keyed rather than overwriting each
+    // other. The key defaults to the policy id, which is unique per surface;
+    // the explicit `slot` exists for a caller that unregisters after its policy
+    // is already gone from its own scope.
+    const key = slot ?? r?.policy.id;
+    if (!key) return;
+    setPageGates((prev) => {
+      // Identity check only. Each caller's memo returns a stable object until
+      // its inputs change, so this is a cheap way to avoid a set-state loop
+      // from a component that reports on every render.
+      if (prev[key] === r) return prev;
+      if (!r) {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: r };
+    });
+  }, []);
+
+  const suppressionResults = React.useMemo<SuppressionResult[]>(() => {
+    if (storefrontPage === 'pdp') return [similarityGate, complementGate];
+    return Object.values(pageGates).filter((g) => g.policy.page === storefrontPage);
+  }, [storefrontPage, similarityGate, complementGate, pageGates]);
+
+  /**
+   * Refusal, written to the ledger.
+   *
+   * A withheld impression is the one saving in this demo that leaves nothing on
+   * screen to point at, which is exactly why it has to be counted: the shopper's
+   * evidence that the store did something for them is an absence. The entry ids
+   * are keyed on the anchor and the surface, so a re-render re-offers an entry
+   * the recorder already holds and it is dropped - see the note on `recordEffort`.
+   */
+  useEffect(() => {
+    if (!isPersonalizationOn) return;
+    const eventId = userEvents[0]?.id ?? null;
+    for (const r of suppressionResults) {
+      recordEffort(
+        suppressionEffort(r, {
+          // Keyed on the surface and its anchor, so a re-render re-offers an id
+          // the recorder already holds. The hero has no anchor product - its
+          // subject is the shopper - so it keys on the event instead.
+          id: `${r.policy.page}:${r.policy.id}:${r.policy.slots > 1 ? selectedProduct.id : eventId ?? 'open'}`,
+          eventId,
+        })
+      );
+    }
+  }, [isPersonalizationOn, suppressionResults, selectedProduct, userEvents, recordEffort]);
+
+  /**
+   * Fatigue, counted once per thing the shopper did.
+   *
+   * Not once per render. A render writes the profile, a profile write re-runs
+   * the gate, and a re-run gate can return a different slate - which renders
+   * again. Batching on the event id breaks that loop at the only point where
+   * breaking it is also correct: an impression is one shopper looking at one
+   * page once, however many times React decides to paint it.
+   */
+  const slateRef = useRef<string[]>([]);
+  slateRef.current = suppressionResults.flatMap((r) => r.kept.map((c) => c.product.id));
+  const impressedEventRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isPersonalizationOn) return;
+    const key = userEvents[0]?.id ?? 'session-open';
+    if (impressedEventRef.current === key) return;
+    impressedEventRef.current = key;
+    profileStore.noteImpressions(slateRef.current);
+  }, [isPersonalizationOn, userEvents, profileStore.noteImpressions]);
 
   const targetComponent =
     storefrontPage === 'home'
@@ -663,6 +1217,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const marketClockLabel = React.useMemo(() => clockLabel(activeClock()), [worldVersion]);
 
+  /* --------------------------------------------------------------- reset -- */
+
+  const [resetNonce, setResetNonce] = useState(0);
+
+  /**
+   * Puts the demo back to the state a first-time viewer should see.
+   *
+   * `resetSessionFor` already existed and does the shopper half: history,
+   * filters, search, journal, effort. It was never enough to show the demo
+   * twice, because four things outlive a change of shopper and all four are
+   * visible on the opening screen - the cart, the market world, whichever page
+   * the last viewer left the storefront on, and the profile persisted in
+   * localStorage under the visitor id.
+   *
+   * The persisted profile is the one that actually matters. Without dropping it
+   * the second run opens with a visitor who already believes things, and the
+   * arrival story - the whole first act - has nothing to show. `clearAllProfiles`
+   * has been sitting in the profile store waiting for exactly this caller.
+   *
+   * Order is deliberate: clear storage first, then re-fold, so the store cannot
+   * rehydrate from the profile it is about to replace.
+   */
+  const resetDemo = () => {
+    clearAllProfiles();
+
+    setPersonaPresetId(DEFAULT_PRESET.id);
+    setPersonaDimensions(DEFAULT_PRESET.dimensions);
+    pendingIdentity.current = DEFAULT_PRESET.identity;
+    resetSessionFor(DEFAULT_PRESET, DEFAULT_PRESET.dimensions);
+    profileStore.reset();
+
+    // The storefront's own state. A cart carried over from the last viewer is
+    // the single most obvious tell that the demo has been run before.
+    setCart([]);
+    setStorefrontPage('home');
+    setShellView('storefront');
+    setJourneyTab('arrival');
+    setSelectedProduct(openingProduct);
+    setActiveExplainedProduct(null);
+    setExplainOn(false);
+    setExplainFocus(null);
+    setIsPersonalizationOn(true);
+    setRailOpen(true);
+    setLastModelFeedback(null);
+
+    // The world clock and any market event fired into it.
+    resetMarketWorld();
+
+    // Local state living inside components that no setter here can reach.
+    setResetNonce((n) => n + 1);
+  };
+
   /* ------------------------------------------------------------- journal -- */
 
   // A render-time snapshot of everything a beat needs. The recorder effects fire
@@ -674,6 +1280,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     trace: activeDecisionTrace,
     similarity: similarityMatches,
     complement: complementMatches,
+    suppression: suppressionResults,
     page: storefrontPage,
     anchor: selectedProduct,
     personalizationOn: isPersonalizationOn,
@@ -684,6 +1291,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     trace: activeDecisionTrace,
     similarity: similarityMatches,
     complement: complementMatches,
+    suppression: suppressionResults,
     page: storefrontPage,
     anchor: selectedProduct,
     personalizationOn: isPersonalizationOn,
@@ -724,6 +1332,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       trace: L.trace,
       similarity: L.similarity,
       complement: L.complement,
+      suppression: L.suppression,
       page: L.page,
       anchor: L.anchor,
       personalizationOn: L.personalizationOn,
@@ -762,6 +1371,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       trace: L.trace,
       similarity: L.similarity,
       complement: L.complement,
+      suppression: L.suppression,
       page: L.page,
       anchor: L.anchor,
       personalizationOn: isPersonalizationOn,
@@ -799,6 +1409,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       trace: L.trace,
       similarity: L.similarity,
       complement: L.complement,
+      suppression: L.suppression,
       page: L.page,
       anchor: L.anchor,
       personalizationOn: L.personalizationOn,
@@ -814,6 +1425,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         scenarios,
         selectedScenario,
         selectScenarioById,
+        personaPresets: PERSONA_PRESETS,
+        personaPresetId,
+        personaDimensions,
+        isCustomPersona,
+        selectPersona,
+        setPersonaDimension,
+        visitorModel,
+        shellView,
+        setShellView,
+        modelsTab,
+        setModelsTab,
+        journeyTab,
+        setJourneyTab,
+        railOpen,
+        toggleRail: () => setRailOpen((v) => !v),
+        explainOn,
+        toggleExplain: () =>
+          setExplainOn((v) => {
+            // Turning the overlay off drops the focus with it. A highlight that
+            // survives its own overlay would reappear, still lit, the next time
+            // someone opened it.
+            if (v) setExplainFocus(null);
+            return !v;
+          }),
+        explainFocus,
+        setExplainFocus,
         isPersonalizationOn,
         togglePersonalization,
         showMLPanel,
@@ -841,6 +1478,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         intentPrediction,
         similarityMatches,
         complementMatches,
+        suppressionCtx,
+        similarityGate,
+        complementGate,
+        suppressionResults,
+        reportSuppression,
+        recordPurchase: profileStore.recordPurchase,
         activeDecisionTrace,
         journal,
         activeExplainedProduct,
@@ -853,6 +1496,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         visitorContext,
         contextReading,
         contextIsSimulated,
+        clientSignals,
+        captureLedger,
+        eventCaptures,
+        facetModel,
+        resetDemo,
+        resetNonce,
         deltaLog: profileStore.deltaLog,
         lastDeltas: profileStore.lastDeltas,
         decisions,

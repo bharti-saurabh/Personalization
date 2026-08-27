@@ -24,7 +24,7 @@ import {
   UserEvent,
 } from '../types';
 import { CONFIDENCE_THRESHOLD, IntentResult, predictIntent, predictIntentFromProfile } from './intent';
-import { applyEvent, buildProfile, createProfile, promoteProfile } from './profile';
+import { applyEvent, applyImpressions, applyPurchase, buildProfile, createProfile, promoteProfile } from './profile';
 import type { ProfileClock, ProfileUpdate, VisitorProfile } from './profile';
 import type { IdentitySeed } from './identity';
 import { ComplementOptions, ComplementResult, retrieveComplements } from './complement';
@@ -48,6 +48,7 @@ export type {
   ProfileDelta,
   ProfileSource,
   ProfileUpdate,
+  PurchaseRecord,
   ScalarTrait,
   SizeEstimate,
   VisitorProfile,
@@ -62,6 +63,7 @@ export {
   hasReached,
   profileCompleteness,
   readContext,
+  resolveGeo,
   rungIndex,
 } from './identity';
 export type {
@@ -69,12 +71,118 @@ export type {
   CompletenessReport,
   ContextReading,
   DeviceClass,
+  GeoResolution,
   IdentityRungMeta,
   IdentitySeed,
   VisitorContext,
 } from './identity';
+// The facet model, through the same façade. Which filter to offer and which
+// value inside it are two predictions, and both are read by the listing page.
+export {
+  FACET_KEYS,
+  FACET_LABEL,
+  FACET_LAMBDA,
+  facetOrder,
+  isDepartment,
+  runFacetModel,
+} from './facets';
+export type { FacetBelief, FacetKey, FacetModel, FacetValueBelief } from './facets';
+// The decision join, and the path helper the journey screen groups writes by.
+export { buildDecisions, fieldOf } from './decisions';
+export type { DecisionEntry, DecisionReading } from './decisions';
 export type { SimilarityResult } from './similarity';
 export type { ComplementResult, BackoffLevel } from './complement';
+// Refusal, through the same façade as recommendation - which is the whole point
+// of the module. A component that can import the ranker and not the gate will
+// eventually ship a rail with no gate on it.
+export {
+  RULE_LABEL,
+  SURFACE_POLICIES,
+  applySuppression,
+  inertContext,
+  refusalSentence,
+  suppressedTeamsFor,
+  suppressionContext,
+  suppressionEffort,
+  thresholdAt,
+  FATIGUE_CEILING,
+  GIFT_OVERRIDE,
+  LOYALIST_CONFIDENCE_FLOOR,
+  LOYALIST_POSTERIOR_FLOOR,
+  RECENT_PURCHASE_WINDOW_DAYS,
+  RIVALRY_SUPPRESSION_FLOOR,
+} from './suppression';
+export type {
+  Candidate,
+  ScoreScale,
+  SuppressionContext,
+  SuppressionDecision,
+  SuppressionResult,
+  SuppressionRule,
+  SurfacePolicy,
+} from './suppression';
+// Size and fit. The prefill is a decision the shopper cannot ignore, so it goes
+// through the same door as everything else that decides something.
+export {
+  BRAND_CUT_BIAS,
+  CUT_BIAS,
+  FIT_PREFILL_FLOOR,
+  FIT_TRANSFER_DAMPING,
+  GIFT_INTENT_BAR,
+  GIFT_INTENT_CONFIDENCE_FLOOR,
+  LAYER_INDEX,
+  POPULATION_CONFIDENCE_CEILING,
+  POPULATION_SIZE_CURVE,
+  SIZE_TRANSFER,
+  fitSentence,
+  ladderFor,
+  predictFit,
+  readsAsGift,
+  scaleOf,
+  sizeAvailability,
+} from './fit';
+export type { CutBias, FitPrediction, FitSource, SizeScaleId, TransferRule } from './fit';
+// Out-of-stock substitution.
+export { CONTINUITY_WEIGHTS, PRICE_TOLERANCE, needsSubstitute, runSubstitution } from './substitution';
+export type {
+  RejectReason,
+  SubstitutionResult,
+  SubstituteScore,
+  UnavailabilityReason,
+} from './substitution';
+// Merchandising badges, and the population statistic behind each one.
+export { BADGE_BASIS_NOTE, badgeStatsFor, buildBadgeIndex } from './badges';
+export type { BadgeIndex, BadgeStat } from './badges';
+// Lifecycle triggers.
+export {
+  BLOCK_LABEL,
+  CHANNEL_RUNG,
+  EMPTY_FREQUENCY,
+  FREQUENCY_CAP,
+  HOLDOUT_SHARE,
+  LIFECYCLE_POLICY,
+  QUIET_HOURS,
+  TRIGGERS,
+  TRIGGER_BY_ID,
+  inHoldout,
+  lifecycleEffort,
+  localHourIn,
+  runLifecycle,
+  sendSentence,
+  withinSendingHours,
+} from './lifecycle';
+export type {
+  Channel,
+  LifecycleResult,
+  LifecycleSession,
+  SendBlock,
+  TriggerDefinition,
+  TriggerEvaluation,
+  TriggerId,
+} from './lifecycle';
+// The model registry.
+export { CARD_BY_ID, FAMILY_LABEL, MODEL_CARDS, featureVectorFor, halfLife, lastFiredFor } from './registry';
+export type { EngineName, FeatureRow, FiredMark, ModelCard, ModelFamily } from './registry';
 
 /** Customer intent: ranked teams, departments, propensity and earned confidence. */
 export function runIntentEngine(
@@ -138,6 +246,29 @@ export function runProfilePromotion(
   clock?: ProfileClock
 ): ProfileUpdate {
   return promoteProfile(previous, scenario, userEvents, seed, clock);
+}
+
+/**
+ * Folds a slate of impressions in. Not an event: nothing about intent moves.
+ *
+ * See the header of `applyImpressions` for why surfaces batch these to one
+ * write per user event rather than writing on render.
+ */
+export function runImpressions(
+  profile: VisitorProfile,
+  productIds: string[],
+  clock?: ProfileClock
+): ProfileUpdate {
+  return applyImpressions(profile, productIds, clock);
+}
+
+/** Records a completed order into the durable state the ownership rule reads. */
+export function runPurchase(
+  profile: VisitorProfile,
+  items: { productId: string; gift?: boolean }[],
+  clock?: ProfileClock
+): ProfileUpdate {
+  return applyPurchase(profile, items, clock);
 }
 
 /** A prior-only profile: what an anonymous first-time visitor is. */

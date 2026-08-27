@@ -38,6 +38,7 @@ import { rankMove, saving } from '../../ml/effort';
 import { rankRecommended, RECOMMENDED_FORMULA } from '../../ml/ranking';
 import { SearchUnderstanding } from './SearchUnderstanding';
 import { CONFIDENCE_THRESHOLD } from '../../ml/intent';
+import { readsAsGift } from '../../ml/engine';
 import { Department, League, Product, TeamId } from '../../types';
 import { TEAM_BY_ID } from '../../sim/taxonomy';
 import { TeamCrest, DeptGlyph } from '../brand/Identity';
@@ -50,6 +51,7 @@ import {
   Home,
   Check,
   Info,
+  Ruler,
 } from 'lucide-react';
 
 /** Effective shelf price - the sale price when there is one. */
@@ -196,6 +198,7 @@ export const ProductListingPage: React.FC = () => {
     searchResult,
     clearSearch,
     publishRanking,
+    explainOn,
   } = useApp();
 
   const [sel, setSel] = useState<Selections>(() => ({
@@ -476,7 +479,7 @@ export const ProductListingPage: React.FC = () => {
           facet,
           answered: false,
           badge:
-            i === 0 ? (intentStillLeading ? 'ML RANKED' : 'NEXT BEST') : i === 1 && intentStillLeading ? 'ML RANKED' : null,
+            i === 0 ? (intentStillLeading ? 'Picked for you' : 'Next best') : i === 1 && intentStillLeading ? 'Picked for you' : null,
         })),
       ],
       defaultRailKeys: defaultKeys,
@@ -522,7 +525,31 @@ export const ProductListingPage: React.FC = () => {
    */
   const prefilledFor = useRef<Set<string>>(new Set());
 
-  const giftIntent = searchResult?.interpretation.giftIntent ?? false;
+  /*
+   * Two gift signals, not one.
+   *
+   * The search interpretation catches "something for my son" the moment it is
+   * typed. The fold catches the slower version - a kids item, then a second
+   * club, then a collectible - which never passes through the search box at
+   * all. Either one is enough to switch the prefill off; both are read through
+   * ml/engine so the bar is the one written down in ml/fit.ts.
+   */
+  const giftIntent = (searchResult?.interpretation.giftIntent ?? false) || readsAsGift(visitorProfile);
+
+  /**
+   * What the prefill did, so the facet can say so.
+   *
+   * A filter that applies itself silently is indistinguishable from a filter
+   * the shopper applied and forgot. This is the receipt: which size, on what
+   * evidence, held at what confidence, with one click to undo it.
+   */
+  const [sizePrefill, setSizePrefill] = useState<{
+    dept: string;
+    size: string;
+    confidence: number;
+    evidence: number;
+    source: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!isPersonalizationOn) return;
@@ -537,6 +564,13 @@ export const ProductListingPage: React.FC = () => {
 
     prefilledFor.current.add(dept);
     setSel((s) => ({ ...s, size: [est.size] }));
+    setSizePrefill({
+      dept,
+      size: est.size,
+      confidence: est.confidence.value,
+      evidence: est.confidence.evidenceCount,
+      source: est.confidence.source,
+    });
     recordEffort(
       saving({
         id: `plp:size-prefill:${dept}:${beat}`,
@@ -722,12 +756,12 @@ export const ProductListingPage: React.FC = () => {
               badge && (
                 <span
                   className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
-                    badge === 'ML RANKED'
+                    badge === 'Picked for you'
                       ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
                       : 'bg-slate-100 text-slate-600 border-slate-200'
                   }`}
                   title={
-                    badge === 'ML RANKED'
+                    badge === 'Picked for you'
                       ? 'The intent model put this filter at the top of the rail'
                       : 'The filter that would narrow these results most from here'
                   }
@@ -743,6 +777,35 @@ export const ProductListingPage: React.FC = () => {
             }`}
           />
         </button>
+
+        {/* The prefill receipt. Only on Size, only when the model applied it,
+            and only while it is still applied - it disappears the moment the
+            shopper unticks the value, because at that point it is describing
+            something that is no longer true. */}
+        {f.key === 'size' && sizePrefill && chosen.includes(sizePrefill.size) && (
+          <div className="mt-2 rounded-lg border border-straive-200 bg-straive-50 px-2 py-1.5">
+            <div className="flex items-center gap-1.5">
+              <Ruler className="h-3 w-3 shrink-0 text-straive-600" />
+              <span className="text-[10.5px] font-extrabold text-slate-900">
+                {sizePrefill.size} prefilled for you
+              </span>
+              <span className="ml-auto shrink-0 font-mono text-[9.5px] font-bold tabular-nums text-straive-700">
+                {Math.round(sizePrefill.confidence * 100)}%
+              </span>
+            </div>
+            <p className="mt-0.5 text-[9.5px] leading-snug text-slate-600">
+              {sizePrefill.evidence.toFixed(1)} weighted selections in {sizePrefill.dept}, source{' '}
+              <span className="font-mono">{sizePrefill.source}</span>. Above the{' '}
+              {Math.round(CONFIDENCE_THRESHOLD * 100)}% bar every surface here uses.
+            </p>
+            <button
+              onClick={() => toggleValue('size', sizePrefill.size)}
+              className="mt-1 text-[9.5px] font-extrabold uppercase tracking-[0.1em] text-straive-700 hover:text-straive-900"
+            >
+              Not my size, clear it
+            </button>
+          </div>
+        )}
 
         {isOpen && (
           <div className="mt-2 space-y-0.5">
@@ -825,7 +888,7 @@ export const ProductListingPage: React.FC = () => {
           ) : selectedLeague || shopTeamId ? (
             <span className="cursor-default">{selectedLeague ?? TEAM_BY_ID[shopTeamId!].league}</span>
           ) : (
-            <span className="font-bold text-slate-800">All Gear</span>
+            <span className="font-bold text-slate-800">All gear</span>
           )}
           {shopTeamId && (
             <>
@@ -882,28 +945,30 @@ export const ProductListingPage: React.FC = () => {
           <div className="min-w-0 flex-1">
             <div className="text-[10px] font-mono uppercase tracking-widest text-white/60">
               {shopTeamId
-                ? `Official Team Shop · ${TEAM_BY_ID[shopTeamId].league}`
+                ? `Official team shop · ${TEAM_BY_ID[shopTeamId].league}`
                 : selectedLeague
-                  ? `${selectedLeague} Shop · All Teams`
-                  : 'All Gear · Every League'}
+                  ? `${selectedLeague} shop · all teams`
+                  : 'All gear · every league'}
             </div>
             <h1 className="text-2xl font-black uppercase tracking-tight truncate font-display">
               {shopTeamId
                 ? TEAM_BY_ID[shopTeamId].fullName
                 : selectedLeague
-                  ? `${selectedLeague} Fan Shop`
-                  : 'Shop All Team Gear'}
+                  ? `${selectedLeague} fan shop`
+                  : 'Shop all team gear'}
             </h1>
             {shopTeamId || !isPersonalizationOn ? (
               <div className="text-[11px] text-white/70">
                 Jerseys, hats, hoodies and collectibles · Officially licensed
               </div>
             ) : (
+              /* This used to read "results are ranked for your predicted
+                 favourite, Eagles (90%)". A store puts the club's name on the
+                 shelf, not its own confidence in having guessed it. */
               <div className="text-[11px] text-white/80 flex items-center gap-1.5">
                 <Sparkles className="h-3 w-3 text-emerald-300 shrink-0" />
                 <span>
-                  No team filter applied — results are ranked for your predicted favourite,{' '}
-                  <b>{predictedTeamId}</b> ({predictedPct}%)
+                  Showing <b>{predictedTeamId}</b> gear first
                 </span>
               </div>
             )}
@@ -937,8 +1002,13 @@ export const ProductListingPage: React.FC = () => {
               Early on the order really is the intent model's; three answers in
               it is the shopping funnel's, and a banner still crediting the model
               at that point would be claiming something the code stopped doing.
-              The mix bar below is that handover, drawn rather than described. */}
-          {isPersonalizationOn && (
+              The mix bar below is that handover, drawn rather than described.
+
+              It is now behind the Explain toggle rather than always on. A
+              shopper filtering a grid does not get told which of two systems
+              ordered their facets; the re-sequencing is still happening, and
+              turning Explain on is how you watch it happen. */}
+          {isPersonalizationOn && explainOn && (
             <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-2">
               <div className="flex items-start gap-1.5">
                 <Sparkles className="h-3 w-3 text-emerald-600 shrink-0 mt-0.5" />
@@ -1022,17 +1092,21 @@ export const ProductListingPage: React.FC = () => {
                 {SORTS.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.label}
-                    {s.id === 'recommended' && isPersonalizationOn ? ' (model-ranked)' : ''}
                   </option>
                 ))}
               </select>
             </label>
           </div>
 
-          {/* -------- Why this order. The sort control names a model output, so
-                       the model output has to be inspectable from where it is
-                       named rather than only from the panel. -------- */}
-          {sortBy === 'recommended' && (
+          {/* -------- Why this order. This is the deepest engine disclosure the
+                       storefront has ever carried - a scorer formula, its
+                       weights, and the paired positions. It stays, because a
+                       ranking that names itself Recommended should be
+                       inspectable from where it is named, but it is now part of
+                       the Explain reveal rather than permanent chrome. Off by
+                       default, the shop simply has a sort control like every
+                       other shop. -------- */}
+          {sortBy === 'recommended' && explainOn && (
             <div className="pt-2.5">
               <button
                 onClick={() => setWhyOpen((v) => !v)}
@@ -1051,12 +1125,12 @@ export const ProductListingPage: React.FC = () => {
                   className={`text-[11px] font-bold ${isPersonalizationOn ? 'text-emerald-900' : 'text-slate-700'}`}
                 >
                   {!isPersonalizationOn
-                    ? 'Recommended is plain popularity right now — personalization is off'
+                    ? 'Recommended is plain popularity right now, personalization is off'
                     : searchResult
                       ? 'This order is relevance times profile affinity'
                       : recommended && recommended.moved.length > 0
                         ? `${recommended.moved.length} of the top ${recommended.items.length} moved from where popularity alone would have put them`
-                        : 'Popularity, reweighted by predicted intent'}
+                        : 'Popularity, reweighted by what this shopper looks at'}
                 </span>
                 <span className="flex-1" />
                 <ChevronDown
@@ -1085,7 +1159,7 @@ export const ProductListingPage: React.FC = () => {
                             {w.weight.toFixed(1)}
                           </span>{' '}
                           <span className="font-semibold text-slate-700">{w.label}</span>
-                          <span className="text-slate-400"> — {w.note}</span>
+                          <span className="text-slate-400"> · {w.note}</span>
                         </div>
                       ))}
                     </div>
@@ -1118,7 +1192,7 @@ export const ProductListingPage: React.FC = () => {
                   {searchResult && (
                     <p className="mt-2 text-[10px] text-slate-500 leading-snug">
                       Relevance comes from the query, affinity from the profile, and the two multiply
-                      rather than add — so a product the shopper would love that does not answer the
+                      rather than add, so a product the shopper would love that does not answer the
                       question still cannot outrank one that does.
                       {searchResult.interpretation.giftIntent &&
                         ' The player term is dropped entirely here, because this was read as a gift.'}
@@ -1126,7 +1200,7 @@ export const ProductListingPage: React.FC = () => {
                   )}
 
                   <p className="mt-2 text-[9.5px] text-slate-400 leading-snug border-t border-slate-100 pt-1.5">
-                    Ranking only. Nothing on this page filters a product out on the model's say-so —
+                    Ranking only. Nothing on this page filters a product out on the model's say-so:
                     membership in the result set is decided by the shopper's filters and their query,
                     and by nothing else.
                   </p>
@@ -1176,7 +1250,7 @@ export const ProductListingPage: React.FC = () => {
                     // and only at the top of the first page where the claim is
                     // actually true.
                     badgeText={
-                      isPersonalizationOn && sortBy === 'recommended' && i < 3 ? 'PICKED FOR YOU' : undefined
+                      isPersonalizationOn && sortBy === 'recommended' && i < 3 ? 'Picked for you' : undefined
                     }
                     badgeType="personalized"
                   />

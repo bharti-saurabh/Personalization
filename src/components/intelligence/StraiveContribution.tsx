@@ -17,7 +17,7 @@ export const StraiveContribution: React.FC = () => {
       <div className="bg-slate-900 text-white p-8 rounded-2xl border border-slate-800 shadow-xl space-y-3">
         <div className="inline-flex items-center space-x-2 bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
           <Sparkles className="h-3.5 w-3.5" />
-          <span>STRAIVE MACHINE LEARNING PARTNERSHIP</span>
+          <span>Straive machine learning partnership</span>
         </div>
         <h1 className="text-3xl font-black font-display uppercase tracking-tight">
           FROM DATA TO CUSTOMER EXPERIENCE

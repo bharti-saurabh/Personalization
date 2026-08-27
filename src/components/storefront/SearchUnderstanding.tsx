@@ -185,7 +185,7 @@ export const SearchUnderstanding: React.FC<{
                     <span className="text-amber-700 font-mono tabular-nums shrink-0">
                       {step.matchesAfter} result{step.matchesAfter === 1 ? '' : 's'}
                     </span>
-                    <span className="text-amber-600/70 truncate hidden md:inline">— {step.reason}</span>
+                    <span className="text-amber-600/70 truncate hidden md:inline">· {step.reason}</span>
                   </div>
                 ))}
                 <p className="text-[10px] text-amber-700/80 leading-snug pt-0.5">

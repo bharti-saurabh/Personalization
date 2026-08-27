@@ -13,7 +13,9 @@
  *   1. WHAT HAPPENED      the event, and how much decayed weight it carried
  *   2. WHAT RAN           which engines re-scored, and what they read
  *   3. WHAT THEY SCORED   ranked outputs, with the delta against the previous beat
- *   4. WHAT THE RULES DID the confidence gate, inventory check, activate or fall back
+ *   4. WHAT THE RULES DID the confidence gate, the suppression gate, activate or
+ *                         fall back - and, when a slot was refused, which named
+ *                         rule refused it
  *   5. WHAT WAS PRESENTED the surfaces that are now bound to that decision
  *
  * Every number here is read back from a prediction the engines actually produced
@@ -37,6 +39,8 @@ import { CONFIDENCE_THRESHOLD, IntentResult } from './intent';
 import { SimilarityResult } from './similarity';
 import { ComplementResult } from './complement';
 import type { SearchResult } from './query';
+import type { SuppressionResult, SuppressionRule } from './suppression';
+import { RULE_LABEL, refusalSentence } from './suppression';
 
 export type EngineName = 'Intent' | 'Similarity' | 'Complement' | 'Query';
 
@@ -99,6 +103,56 @@ export interface MarketBeat {
   at: string;
 }
 
+/**
+ * What the gate refused on this beat, and under which rule.
+ *
+ * Recommendation is easy to show: it is the thing on the screen. Refusal leaves
+ * no trace at all unless something records it, which is how a store ends up
+ * unable to answer "why did you never show me that". This is that record, and it
+ * is deliberately shaped like the presented surfaces above rather than like a
+ * log line - the panel renders the two side by side, and they have to read as
+ * two halves of one decision.
+ *
+ * A rule is NAMED, not summarised. "3 items withheld" is a statistic; "Rival
+ * club - NFC East, the oldest grudge in the division" is an answer.
+ */
+export interface WithheldBeat {
+  /** Products the gate refused across every surface on this beat. */
+  count: number;
+  /** Slots left empty because nothing behind the refusal cleared the bar. */
+  emptied: number;
+  /** Rules that fired, in the order the gate applies them. */
+  rules: { rule: SuppressionRule; label: string; count: number }[];
+  /** One line per surface that refused something, for the panel card. */
+  surfaces: {
+    surface: string;
+    kept: number;
+    slots: number;
+    /** The refusals themselves, each already carrying its own reason. */
+    reasons: { product: string; rule: SuppressionRule; ruleLabel: string; reason: string }[];
+  }[];
+  /**
+   * The rivalry rule's own sentence, when it fired.
+   *
+   * Broken out because it is the only rule here that a shopper would notice the
+   * absence of, and the only one whose justification lives outside the model -
+   * it comes from a stated graph, not from a score.
+   */
+  rivalry: string | null;
+  /** The shopper-facing summary, when anything fired at all. */
+  sentence: string | null;
+  /**
+   * Surfaces where the rivalry rule declined to fire because the shopper had
+   * anchored the page on that rival themselves.
+   *
+   * A beat can carry this and nothing else - a page where the only decision the
+   * gate made was to stand down. That is still a decision and the panel prints
+   * it, because a rule that is only ever visible when it removes something
+   * reads as absolute, and this one is not.
+   */
+  stoodDown: { surface: string; team: string; loyalTo: string }[];
+}
+
 export interface JournalBeat {
   id: string;
   /**
@@ -127,6 +181,8 @@ export interface JournalBeat {
   personalizationOn: boolean;
   /** Present only on a `market` beat. */
   market?: MarketBeat;
+  /** Present only when the suppression gate actually refused something. */
+  withheld?: WithheldBeat;
 }
 
 export interface BeatInput {
@@ -154,6 +210,14 @@ export interface BeatInput {
    * explains what the system decided X meant.
    */
   search?: SearchResult;
+  /**
+   * Every suppression decision made while rendering this beat, one per surface.
+   *
+   * Passed in rather than recomputed here for the same reason the deltas are:
+   * the journal reports what the surfaces did, and a journal that re-derives its
+   * own version of events can disagree with the screen it is describing.
+   */
+  suppression?: SuppressionResult[];
 }
 
 const pct = (v: number) => Math.round(v * 100);
@@ -456,6 +520,22 @@ function surfacesFor(i: BeatInput): SurfaceChange[] {
     });
   }
 
+  // Refusal, listed as a surface rather than as a footnote. A slot the gate
+  // emptied is a slot that changed, and the panel's job is to account for every
+  // slot that changed - including the ones that changed to nothing.
+  for (const r of i.suppression ?? []) {
+    if (!r.fired) continue;
+    out.push({
+      surface: `${r.policy.label} - withheld`,
+      detail:
+        `${r.suppressed.length} candidate(s) refused before ranking. ` +
+        (r.withheld > 0
+          ? `${r.withheld} slot(s) left empty: nothing behind them cleared this surface's bar.`
+          : `Backfilled from the next-best candidates, so the rail is still full.`),
+      items: r.suppressed.map((d) => `${d.product.name} - ${d.ruleLabel}`),
+    });
+  }
+
   return out;
 }
 
@@ -557,6 +637,73 @@ function whySentence(i: BeatInput): string {
   return `${parts.join('. ')}. ${gateClause}`;
 }
 
+/* ------------------------------------------------------------ withheld -- */
+
+/**
+ * Fold every surface's refusals into one record for the beat.
+ *
+ * Returns undefined - not an empty record - when nothing fired. A beat that
+ * refused nothing should carry no withheld field at all, so that the panel can
+ * distinguish "the gate ran and let everything through" from "the gate is
+ * reported here as zeros", which look identical once rendered.
+ */
+function withheldFor(i: BeatInput): WithheldBeat | undefined {
+  const all = i.suppression ?? [];
+  const results = all.filter((r) => r.fired);
+  const stoodDown = all
+    .filter((r) => r.rivalryStoodDown)
+    .map((r) => ({
+      surface: r.policy.label,
+      team: r.rivalryStoodDown!.team as string,
+      loyalTo: r.rivalryStoodDown!.loyalTo as string,
+    }));
+  // A stand-down with no refusals is still a beat worth writing.
+  if (results.length === 0 && stoodDown.length === 0) return undefined;
+
+  // Rule order is the gate's own order, not descending count: the panel is
+  // explaining a sequence of decisions, and re-sorting it by frequency would
+  // misreport which rule got to the product first.
+  const order: SuppressionRule[] = ['recent_purchase', 'rivalry', 'fatigue', 'confidence_floor'];
+  const tally = new Map<SuppressionRule, { label: string; count: number }>();
+  for (const r of results) {
+    for (const row of r.byRule) {
+      const cur = tally.get(row.rule);
+      if (cur) cur.count += row.count;
+      else tally.set(row.rule, { label: row.label, count: row.count });
+    }
+  }
+
+  const rivalryHit = results
+    .flatMap((r) => r.suppressed)
+    .find((d) => d.rule === 'rivalry');
+
+  return {
+    count: results.reduce((n, r) => n + r.suppressed.length, 0),
+    emptied: results.reduce((n, r) => n + r.withheld, 0),
+    rules: order
+      .filter((rule) => tally.has(rule))
+      .map((rule) => ({ rule, label: tally.get(rule)!.label, count: tally.get(rule)!.count })),
+    surfaces: results.map((r) => ({
+      surface: r.policy.label,
+      kept: r.kept.length,
+      slots: r.policy.slots,
+      reasons: r.suppressed.map((d) => ({
+        product: d.product.name,
+        rule: d.rule,
+        ruleLabel: d.ruleLabel,
+        reason: d.reason,
+      })),
+    })),
+    rivalry: rivalryHit ? rivalryHit.reason : null,
+    // One sentence for the whole beat, built from the surface that refused most.
+    // Concatenating every surface's sentence produces a paragraph nobody reads.
+    sentence: results.length
+      ? refusalSentence(results.reduce((a, b) => (b.suppressed.length > a.suppressed.length ? b : a)))
+      : null,
+    stoodDown,
+  };
+}
+
 /* ----------------------------------------------------------------- build -- */
 
 export function buildBeat(i: BeatInput): JournalBeat {
@@ -580,6 +727,26 @@ export function buildBeat(i: BeatInput): JournalBeat {
 
   const top = intent.teams[0];
   const t = intent.trace;
+  const withheld = withheldFor(i);
+
+  // The refusal clause goes AFTER the explanation, never instead of it, and it
+  // names the rule rather than counting the casualties. It also lands last on
+  // purpose: the house style for this stream is mechanism, then consequence,
+  // then number, and a rule name is a better closing word than a posterior.
+  // Three cases, and the third is the one worth having: a beat where the gate's
+  // only decision was to NOT fire. Reporting that as "Gate fired: " with an
+  // empty list is how the first draft of this read.
+  const gateNote = !withheld
+    ? null
+    : withheld.rivalry
+      ? `${RULE_LABEL.rivalry} fired: ${withheld.rivalry}`
+      : withheld.rules.length
+        ? `Gate fired: ${withheld.rules.map((r) => `${r.label} (${r.count})`).join(', ')}.`
+        : withheld.stoodDown.length
+          ? `${RULE_LABEL.rivalry} stood down: this page is anchored on ${withheld.stoodDown[0].team}, which the shopper opened themselves, so it is shown despite the ${withheld.stoodDown[0].loyalTo} read.`
+          : null;
+
+  const why = gateNote ? `${whySentence(i)} ${gateNote}` : whySentence(i);
 
   return {
     id: `beat-${i.seq}`,
@@ -598,7 +765,8 @@ export function buildBeat(i: BeatInput): JournalBeat {
       detail: trace.finalDecisionReason,
     },
     presented: surfacesFor(i),
-    why: whySentence(i),
+    withheld,
+    why,
     shift: prevIntent
       ? { label: top.team, from: probOf(prevIntent, top.team), to: top.probability }
       : undefined,

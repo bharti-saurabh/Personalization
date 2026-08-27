@@ -1,7 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Trash2, ShoppingBag, Plus, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
-import { runComplementEngine } from '../../ml/engine';
+import { SURFACE_POLICIES, applySuppression, needsSubstitute, runComplementEngine } from '../../ml/engine';
+import { SubstitutionPanel } from './SubstitutionPanel';
+import { WithheldNotice } from './WithheldNotice';
 import { ProductImage } from './ProductImage';
 import { TeamCrest } from '../brand/Identity';
 
@@ -14,6 +16,10 @@ export const CartPage: React.FC = () => {
     products,
     setStorefrontPage,
     recordEvent,
+    isPersonalizationOn,
+    suppressionCtx,
+    reportSuppression,
+    recordPurchase,
   } = useApp();
 
   // An inline confirmation rather than window.alert: a native dialog in the
@@ -31,8 +37,19 @@ export const CartPage: React.FC = () => {
   // incremental value below is a fact about this basket rather than an
   // assumption about a population. It moves the instant a complement is
   // accepted, which is the whole point of showing it here.
-  const recommendedItems = cart.filter((item) => item.addedByRecommendation);
+  //
+  // A SUBSTITUTED LINE IS NOT INCREMENTAL. It is tagged as recommendation-driven
+  // because an engine chose it, and it is deliberately left out of the figure
+  // below: the shopper had already decided to buy something, and the ranker
+  // changed WHICH product rather than adding one. Counting a swap as incremental
+  // revenue is the easiest way to make a personalization number look good and
+  // the fastest way to lose the room when somebody checks.
+  const recommendedItems = cart.filter(
+    (item) => item.addedByRecommendation && item.recommendationSource !== 'Availability Substitution'
+  );
+  const substitutedItems = cart.filter((item) => item.recommendationSource === 'Availability Substitution');
   const recommendedValue = recommendedItems.reduce((acc, item) => acc + lineValue(item), 0);
+  const substitutedValue = substitutedItems.reduce((acc, item) => acc + lineValue(item), 0);
   const organicValue = subtotal - recommendedValue;
   const basketShare = subtotal > 0 ? recommendedValue / subtotal : 0;
 
@@ -45,11 +62,57 @@ export const CartPage: React.FC = () => {
   // this ran a full co-order sweep of the catalog on every render of the cart -
   // including every quantity tick, every hover that moved state, and the
   // checkout confirmation - to produce the same three products each time.
+  //
+  // The retrieval was already memoised on `[anchorProduct, products]` before the
+  // suppression gate existed, and it stays that way. Adding the profile to these
+  // deps would have undone the fix: the co-order sweep is the expensive half,
+  // the profile moves on every click, and the sweep does not depend on it. So
+  // the profile read lives in a SECOND memo below, over the handful of
+  // candidates this one already returned.
+  //
+  // The limit went from 3 to 8 for the same reason it did on the PDP: a gate
+  // placed after a retrieval that returns exactly enough can only ever leave a
+  // hole.
   const anchorProduct = cart[0]?.product || products[0];
-  const cartComplements = useMemo(
-    () => runComplementEngine(anchorProduct, products, 3),
+  const cartCandidates = useMemo(
+    () => runComplementEngine(anchorProduct, products, 8),
     [anchorProduct, products]
   );
+
+  // The cheap half. Runs on every profile fold, and all it does is filter and
+  // re-sort at most eight things it was handed.
+  const cartGate = useMemo(
+    () =>
+      applySuppression(
+        cartCandidates.map((m) => ({
+          product: m.product,
+          confidence: m.complementScore,
+          source: 'Complement',
+        })),
+        suppressionCtx,
+        SURFACE_POLICIES.cart_crosssell,
+        // The basket is the shopper's own choice, so a rival already in it
+        // stands the rivalry rule down for this rail.
+        { anchor: anchorProduct }
+      ),
+    [cartCandidates, suppressionCtx, anchorProduct]
+  );
+
+  const cartComplements = useMemo(() => {
+    const by = new Map(cartCandidates.map((m) => [m.product.id, m]));
+    return cartGate.kept.map((c) => by.get(c.product.id)!).filter(Boolean);
+  }, [cartCandidates, cartGate]);
+
+  // The provider owns the ledger and the beat, and it cannot see this gate -
+  // running it there would mean a co-order sweep on every render of a page that
+  // is usually closed. So the page hands its result up. The memo above returns a
+  // stable object until its inputs change, so this fires once per real change.
+  useEffect(() => {
+    reportSuppression(cartGate);
+    // The slot key is passed explicitly on teardown: the gate object is gone
+    // by then, so the provider cannot read the policy id off it.
+    return () => reportSuppression(null, SURFACE_POLICIES.cart_crosssell.id);
+  }, [cartGate, reportSuppression]);
 
   const handleAddCrossSell = (compProduct: typeof products[0]) => {
     addToCart(compProduct, 'L', 'Cross-Sell Complement');
@@ -61,7 +124,7 @@ export const CartPage: React.FC = () => {
       <div className="bg-slate-900 text-white p-6 border-b border-slate-800">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-black font-display uppercase tracking-tight">YOUR SHOPPING CART</h1>
+            <h1 className="text-2xl font-black font-display uppercase tracking-tight">Your shopping cart</h1>
             <p className="text-xs text-slate-400 mt-1">
               {cart.length} item(s) selected • Free shipping on orders over $75
             </p>
@@ -98,8 +161,21 @@ export const CartPage: React.FC = () => {
               {cart.map((item) => {
                 const p = item.product;
                 const unitPrice = p.salePrice || p.price;
+                /*
+                 * A line that will not ship with the rest of the basket.
+                 *
+                 * The cart is the last place a store can afford to be quiet
+                 * about this. A pre-order sitting silently between two
+                 * in-stock lines turns one delayed item into a delayed order,
+                 * and the shopper finds out from the confirmation email. The
+                 * same ranker that runs on the product page runs here, over
+                 * the same gate, offered rather than imposed - the line stays
+                 * in the basket unless the shopper swaps it themselves.
+                 */
+                const late = needsSubstitute(p, item.selectedSize ?? null);
                 return (
-                  <div key={`${p.id}-${item.selectedSize}`} className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div key={`${p.id}-${item.selectedSize}`} className="p-4 flex flex-col gap-3">
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                     <div className="flex items-center space-x-4">
                       {/* Product Visual Box */}
                       <ProductImage
@@ -141,6 +217,24 @@ export const CartPage: React.FC = () => {
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
+                  </div>
+
+                  {late && (
+                    <SubstitutionPanel
+                      anchor={p}
+                      requestedSize={item.selectedSize ?? null}
+                      variant={p.inventoryStatus === 'Pre-Order' ? 'offer' : 'block'}
+                      onSelect={(sub, size) => {
+                        addToCart(sub, size ?? undefined, 'Availability Substitution');
+                        removeFromCart(p.id);
+                        recordEvent(`Swapped ${p.name} for ${sub.name}`, {
+                          productId: sub.id,
+                          team: sub.team,
+                          department: sub.department,
+                        });
+                      }}
+                    />
+                  )}
                   </div>
                 );
               })}
@@ -212,6 +306,8 @@ export const CartPage: React.FC = () => {
                 );
               })}
             </div>
+
+            <WithheldNotice result={cartGate} active={isPersonalizationOn} className="mt-3" />
           </div>
         </div>
 
@@ -252,6 +348,12 @@ export const CartPage: React.FC = () => {
             ) : (
               <button
                 onClick={() => {
+                  // Written before the cart is emptied, and deliberately outside
+                  // the affinity fold: the clicks that filled this basket were
+                  // already counted as they happened. This records OWNERSHIP, so
+                  // that the gate stops offering the shopper what they have just
+                  // bought.
+                  recordPurchase(cart.map((item) => ({ productId: item.product.id })));
                   recordEvent('Completed Checkout Event');
                   clearCart();
                   setCheckoutDone(true);
@@ -283,6 +385,17 @@ export const CartPage: React.FC = () => {
                     {recommendedValue > 0 ? `+$${recommendedValue.toFixed(2)}` : '$0.00'}
                   </span>
                 </div>
+                {substitutedItems.length > 0 && (
+                  <div className="flex justify-between gap-2">
+                    <span
+                      className="text-indigo-900/70"
+                      title="Revenue the store kept when what was asked for could not be had. Deliberately not counted as incremental."
+                    >
+                      Kept by substitution ({substitutedItems.length}):
+                    </span>
+                    <span className="font-bold text-slate-600">${substitutedValue.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between gap-2 pt-1 border-t border-indigo-200">
                   <span className="text-indigo-900/70">Share of basket value:</span>
                   <span className="font-bold font-mono">{(basketShare * 100).toFixed(0)}%</span>

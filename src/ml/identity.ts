@@ -29,7 +29,7 @@
  * cannot form a cycle.
  */
 
-import { Department, League, Scenario, TeamId } from '../types';
+import { Department, League, Product, Scenario, TeamId } from '../types';
 import { DEPARTMENT_IDS, TEAMS, TEAM_BY_ID } from '../sim/taxonomy';
 import type { AgeBand, GenderTrait, IdentityState, ProfileSource, VisitorProfile } from './profile';
 
@@ -149,6 +149,17 @@ export interface MemberRecord {
    * informative too: that is a shopper who buys for themselves.
    */
   giftOrders: number;
+  /**
+   * The line items, with SKUs.
+   *
+   * Everything else in this record is an aggregate - counts by club, by
+   * department, by player - and aggregates cannot answer the one question the
+   * ownership rule asks, which is "have you got THIS". A retailer's order
+   * history is line items; the aggregates above are the summaries built from
+   * them. Modelling it the other way round would have made the suppression rule
+   * fuzzy for no reason other than the shape of this interface.
+   */
+  recentOrders: { productId: string; daysAgo: number; gift: boolean }[];
 }
 
 /** Everything the ladder makes available at a given rung. */
@@ -761,17 +772,70 @@ export function profileCompleteness(profile: VisitorProfile): CompletenessReport
 /* -------------------------------------------- demo seeds from a scenario -- */
 
 /**
+ * The SKUs a member with this history would plausibly have bought.
+ *
+ * Deterministic, like the rest of the seed: for each favourite club, the most
+ * popular item in the two departments the record already says they order from.
+ * That is the merchandise a fan with a handful of orders realistically owns,
+ * and picking it by popularity rather than at random means the demo's ownership
+ * rule fires on products the shopper is likely to meet again - which is the
+ * whole thing worth demonstrating.
+ *
+ * Ages are spread across and beyond the ownership window on purpose. A record
+ * where every order is recent would make the rule look absolute; one order at
+ * 210 days is what shows a viewer that the window has an outside edge.
+ *
+ * The gift flag lands on the SECOND club's item, when there is one. A shopper
+ * whose order history is mostly one club with an occasional other-club item in
+ * it is the archetypal gift buyer, and that is the pattern the exception exists
+ * to protect.
+ */
+function recentOrdersFor(
+  favTeams: TeamId[],
+  orders: number,
+  catalog?: Product[]
+): { productId: string; daysAgo: number; gift: boolean }[] {
+  if (!catalog || catalog.length === 0 || orders === 0) return [];
+
+  const wanted: Department[] = ['Jerseys', 'Hats'];
+  const out: { productId: string; daysAgo: number; gift: boolean }[] = [];
+
+  favTeams.slice(0, 2).forEach((team, clubIndex) => {
+    wanted.forEach((department, deptIndex) => {
+      const best = catalog
+        .filter((p) => p.team === team && p.department === department)
+        .sort((a, b) => b.popularity - a.popularity)[0];
+      if (!best || out.some((o) => o.productId === best.id)) return;
+      out.push({
+        productId: best.id,
+        daysAgo: 18 + clubIndex * 96 + deptIndex * 41,
+        gift: clubIndex === 1,
+      });
+    });
+  });
+
+  return out;
+}
+
+/**
  * Synthesises the record each rung would hold for a demo persona.
  *
  * Derived deterministically from the scenario - no RNG - so the same shopper
  * promotes to the same profile every time the demo is run. The alternative,
  * hand-authoring five records per scenario, would drift from the scenario
  * definitions the moment either changed.
+ *
+ * `catalog` is optional and only the order history needs it. A seed built
+ * without one is complete in every other respect and simply has no line items,
+ * which is the correct behaviour for a caller that has not loaded a catalog -
+ * better than resolving SKUs against a catalog that might not be the one the
+ * storefront is rendering.
  */
 export function demoSeedFor(
   scenario: Scenario,
   state: IdentityState,
-  context?: VisitorContext
+  context?: VisitorContext,
+  catalog?: Product[]
 ): IdentitySeed {
   const favTeams = scenario.favTeams ?? [];
   const orders = scenario.historicalOrdersCount ?? 0;
@@ -806,6 +870,7 @@ export function demoSeedFor(
     // A quarter of orders going elsewhere is the realistic shape for a fan who
     // buys the occasional jersey for a relative.
     giftOrders: Math.round(orders * 0.25),
+    recentOrders: recentOrdersFor(favTeams, orders, catalog),
     // The top-billed player from each favourite club, which is what a shopper
     // with a handful of orders realistically owns.
     orderedPlayers: favTeams.slice(0, 2).flatMap((team, i) => {

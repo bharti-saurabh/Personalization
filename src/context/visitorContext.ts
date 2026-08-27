@@ -15,6 +15,8 @@
 
 import type { DeviceClass, VisitorContext } from '../ml/identity';
 import { emptyContext } from '../ml/identity';
+import type { ClientSignals } from '../state/capture';
+import { emptyClientSignals } from '../state/capture';
 
 /**
  * Query parameters that let a demo be opened as a specific arriving visitor.
@@ -107,4 +109,84 @@ export const SIMULATED_ARRIVAL: VisitorContext = {
  */
 export function contextIsBare(context: VisitorContext): boolean {
   return !context.referrer && !context.utm.campaign && !context.utm.source;
+}
+
+/* --------------------------------------------------------- client reads -- */
+
+/**
+ * Everything else the browser will answer, read once at arrival.
+ *
+ * These are the fields the capture ledger renders as `read`, so the rule for
+ * this function is strict: it may only return what it genuinely asked the
+ * browser for. Anything it cannot get is null, and null is rendered as "not
+ * available", which is a truthful and rather interesting row in its own right -
+ * a Firefox visitor withholds four of these where a Chrome visitor gives them
+ * up, and the audience can see the difference on the screen.
+ *
+ * Nothing here is combined into a fingerprint. Read individually these are
+ * coarse; hashed together they would identify a device across sites, and the
+ * store has no use for that when it has a first-party cookie.
+ */
+export function readClientSignals(): ClientSignals {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return emptyClientSignals();
+  }
+
+  const nav = navigator as Navigator & {
+    connection?: { effectiveType?: string; downlink?: number; saveData?: boolean };
+    deviceMemory?: number;
+    userAgentData?: { platform?: string };
+  };
+
+  const media = (q: string): boolean | null => {
+    try {
+      return window.matchMedia?.(q).matches ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  let localHour: number | null = null;
+  let localWeekday: string | null = null;
+  try {
+    const now = new Date();
+    localHour = now.getHours();
+    localWeekday = now.toLocaleDateString(undefined, { weekday: 'long' });
+  } catch {
+    /* a locale-less environment reports neither, and says so */
+  }
+
+  const conn = nav.connection;
+
+  return {
+    language: nav.language ?? null,
+    languages: Array.from(nav.languages ?? []),
+    // userAgentData first: it is the supported question, and `platform` is
+    // deprecated everywhere it still answers.
+    platform: nav.userAgentData?.platform ?? (nav as unknown as { platform?: string }).platform ?? null,
+    screen: window.screen
+      ? {
+          width: window.screen.width,
+          height: window.screen.height,
+          dpr: Math.round((window.devicePixelRatio || 1) * 100) / 100,
+        }
+      : null,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    pointer: media('(pointer: coarse)') ? 'coarse' : media('(pointer: fine)') ? 'fine' : null,
+    prefersDark: media('(prefers-color-scheme: dark)'),
+    prefersReducedMotion: media('(prefers-reduced-motion: reduce)'),
+    connection: conn
+      ? {
+          effectiveType: conn.effectiveType ?? null,
+          downlink: conn.downlink ?? null,
+          saveData: conn.saveData ?? null,
+        }
+      : null,
+    hardwareConcurrency: nav.hardwareConcurrency ?? null,
+    deviceMemoryGb: nav.deviceMemory ?? null,
+    cookiesEnabled: nav.cookieEnabled ?? null,
+    doNotTrack: nav.doNotTrack ?? null,
+    localHour,
+    localWeekday,
+  };
 }

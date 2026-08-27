@@ -39,8 +39,9 @@
  */
 
 import { StorefrontPage } from '../types';
-import type { JournalBeat, MarketBeat, ModelRun, SurfaceChange } from './journal';
+import type { JournalBeat, MarketBeat, ModelRun, SurfaceChange, WithheldBeat } from './journal';
 import type { ProfileDelta, VisitorProfile } from './profile';
+import { RULE_LABEL } from './suppression';
 
 /** The three-part reading. Order is the contract; do not render out of order. */
 export interface DecisionReading {
@@ -77,6 +78,15 @@ export interface DecisionEntry {
   personalizationOn: boolean;
   /** Present only when the world itself moved. See the note in the header. */
   market?: MarketBeat;
+  /**
+   * Present only when the suppression gate refused something.
+   *
+   * Carried in full rather than summarised into `rules`, because the panel's
+   * reader is a merchandiser who will want to know WHICH product was refused -
+   * the storefront's own notice deliberately does not say, and this is the
+   * screen where that question gets answered.
+   */
+  withheld?: WithheldBeat;
 }
 
 const PAGE_LABEL: Record<StorefrontPage, string> = {
@@ -280,6 +290,18 @@ function numberOf(beat: JournalBeat, writes: ProfileDelta[]): string {
   const surfaces = beat.presented.filter((s) => !s.isFallback).length;
   if (surfaces) bits.push(`${surfaces} surface${surfaces === 1 ? '' : 's'} re-ranked`);
   if (items) bits.push(`${items} item${items === 1 ? '' : 's'} placed`);
+  // The refusal is as countable as the placement, and it belongs in the same
+  // sentence. A close that reports only what was shown is reporting half a
+  // decision.
+  if (beat.withheld) {
+    // A beat can carry a stand-down and no refusals at all. "0 withheld" is a
+    // true statement that reads as nothing having happened, so it is not made.
+    if (beat.withheld.count > 0) bits.push(`${beat.withheld.count} withheld`);
+    if (beat.withheld.emptied > 0) bits.push(`${beat.withheld.emptied} slot(s) left empty`);
+    if (beat.withheld.stoodDown.length > 0) {
+      bits.push(`rivalry stood down on ${beat.withheld.stoodDown.length} surface(s)`);
+    }
+  }
 
   const mass = writes.reduce((n, w) => n + w.contribution, 0);
   if (mass > 0) bits.push(`${mass.toFixed(2)} evidence added`);
@@ -397,7 +419,32 @@ export function buildDecisions(
       models: beat.runs,
       writes,
       surfaces: beat.presented,
-      rules: [{ label: beat.gate.label, passed: beat.gate.passed, detail: beat.gate.detail }],
+      // The confidence gate first, then whatever the suppression gate refused.
+      // Order matters: the confidence gate decides whether there is a
+      // personalized ordering at all, and the suppression rules only get to run
+      // on one that exists.
+      rules: [
+        { label: beat.gate.label, passed: beat.gate.passed, detail: beat.gate.detail },
+        ...(beat.withheld?.stoodDown ?? []).map((sd) => ({
+          label: `${RULE_LABEL.rivalry} - stood down`,
+          // Passed, because the rule ran and let the product through. The
+          // opposite reading - a failed rule - would put this in the panel's
+          // refusal column, where it is the one entry that is not a refusal.
+          passed: true,
+          detail: `${sd.surface} is anchored on ${sd.team}, which the shopper opened themselves, so ${sd.team} merchandise is shown despite the ${sd.loyalTo} read. Other rivals are still withheld.`,
+        })),
+        ...(beat.withheld?.rules ?? []).map((r) => ({
+          label: r.label,
+          // `passed: false` is the right reading here and it is worth being
+          // explicit about why: a fired suppression rule is a refusal, and the
+          // panel colours these red. A rule that fires is a slot that did not.
+          passed: false,
+          detail:
+            r.rule === 'rivalry' && beat.withheld?.rivalry
+              ? beat.withheld.rivalry
+              : `${r.count} candidate${r.count === 1 ? '' : 's'} refused under this rule.`,
+        })),
+      ],
       reading: {
         mechanism: mechanismOf(beat, writes),
         consequence: consequenceOf(beat),
@@ -406,6 +453,7 @@ export function buildDecisions(
       features: featuresOf(beat, writes, profile),
       personalizationOn: beat.personalizationOn,
       market: beat.market,
+      withheld: beat.withheld,
     };
   });
 }

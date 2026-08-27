@@ -27,6 +27,7 @@ import { Search, Heart, User, ShoppingBag, Truck, CornerDownLeft, ArrowUp, Spark
 import { Department, League } from '../../types';
 import { TeamCrest, LeagueBadge } from '../brand/Identity';
 import { ProductImage } from '../storefront/ProductImage';
+import { ExplainMarker } from '../storefront/ExplainMarker';
 import { suggest } from '../../ml/query';
 import { saving } from '../../ml/effort';
 import type { Suggestion } from '../../ml/query';
@@ -236,7 +237,6 @@ export const Header: React.FC = () => {
   };
 
   const predictedTeam = activeTeamOverride || intentPrediction.teams[0]?.team;
-  const predictedPct = Math.round((intentPrediction.teams[0]?.probability ?? 0) * 100);
 
   return (
     <header className="shrink-0 bg-ink-900 text-white border-b border-white/10">
@@ -254,7 +254,7 @@ export const Header: React.FC = () => {
           <ProSportsMark className="h-9 w-9 shadow-lg shadow-red-900/30 rounded-[9px] group-hover:scale-105 transition-transform" />
           <span className="hidden sm:block leading-none">
             <span className="block font-display font-extrabold text-[17px] tracking-tight">ProSports</span>
-            <span className="block text-[10px] text-slate-400 font-medium mt-0.5">Official Fan Shop</span>
+            <span className="block text-[10px] text-slate-400 font-medium mt-0.5">Official fan shop</span>
           </span>
         </button>
 
@@ -284,7 +284,7 @@ export const Header: React.FC = () => {
                   {suggestions.interpretation.nodes.length === 0 ? (
                     <span className="text-[10.5px] text-slate-500">
                       {settled
-                        ? 'Nothing in that query maps onto the catalog yet — Enter falls back to your profile.'
+                        ? 'Nothing in that query maps onto the catalog yet. Enter falls back to your profile.'
                         : 'Reading the query…'}
                     </span>
                   ) : (
@@ -439,8 +439,15 @@ export const Header: React.FC = () => {
         </div>
       </div>
 
-      {/* Utility row: categories on the left, shipping promise on the right. */}
-      <div className="bg-ink-950/70 border-t border-white/8 px-4 h-9 flex items-center justify-between gap-6 text-[12px] overflow-x-auto scrollbar-none">
+      {/* Utility row: categories on the left, shipping promise on the right.
+          The league order in this nav is a model output - it is the first
+          personalized thing a shopper meets, before a single pixel of the page
+          below has loaded - so it carries a marker under the Explain reveal. */}
+      <div
+        className="relative bg-ink-950/70 border-t border-white/8 px-4 h-9 flex items-center justify-between gap-6 text-[12px] overflow-x-auto scrollbar-none"
+        data-module="league-nav"
+      >
+        <ExplainMarker id="league-nav" className="top-1.5 right-2" />
         <nav className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => handleCategoryClick()}
@@ -450,7 +457,7 @@ export const Header: React.FC = () => {
                 : 'text-slate-300 hover:text-white hover:bg-white/8'
             }`}
           >
-            All Gear
+            All gear
           </button>
           <span className="mx-1 h-4 w-px bg-white/12" />
           {NAV_LEAGUES.map((lg) => (
@@ -479,13 +486,24 @@ export const Header: React.FC = () => {
         </nav>
 
         <div className="flex items-center gap-3 shrink-0">
+          {/* This used to read "Shopping as an Eagles fan · 90%", which told the
+              shopper the site had scored them and put the number on the glass.
+              A real store would put a shortcut to their club here and say
+              nothing about how it knew. The shortcut is the personalization;
+              the confidence behind it belongs in the rail. */}
           {isPersonalizationOn && predictedTeam && (
-            <span className="hidden lg:flex items-center gap-1.5 bg-emerald-500/12 border border-emerald-400/25 text-emerald-300 rounded-full pl-1 pr-2.5 py-0.5 font-semibold text-[11px]">
+            <button
+              onClick={() => {
+                setActiveTeamOverride(predictedTeam);
+                setActiveDeptFilter(null);
+                setStorefrontPage('plp');
+                recordEvent(`Opened team shop: ${predictedTeam}`, { team: predictedTeam, pageType: 'PLP' });
+              }}
+              className="hidden lg:flex items-center gap-1.5 bg-white/5 border border-white/15 hover:border-white/35 text-slate-200 hover:text-white rounded-full pl-1 pr-2.5 py-0.5 font-semibold text-[11px] transition-colors"
+            >
               <TeamCrest team={predictedTeam} size="xs" />
-              <span>
-                Shopping as an <b className="text-emerald-200">{predictedTeam}</b> fan · {predictedPct}%
-              </span>
-            </span>
+              <span>{predictedTeam} shop</span>
+            </button>
           )}
           <span className="hidden xl:flex items-center gap-1.5 text-slate-400 font-medium">
             <Truck className="h-3.5 w-3.5" />

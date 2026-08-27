@@ -147,12 +147,23 @@ export const EFFORT_KINDS: Record<EffortKind, EffortKindMeta> = {
   },
 };
 
+/**
+ * Where a ledger row was earned.
+ *
+ * Wider than `StorefrontPage` by exactly one member. The lifecycle channels
+ * spare a shopper effort too - a message that was not sent is a message they
+ * did not have to read and dismiss - and those savings are earned off the
+ * storefront entirely. Rather than inventing a second ledger for them, the one
+ * ledger admits a page that is not a page.
+ */
+export type EffortPage = StorefrontPage | 'offsite';
+
 export interface EffortEntry {
   id: string;
   /** The event this was observed on, when there was one. */
   eventId: string | null;
   kind: EffortKind;
-  page: StorefrontPage;
+  page: EffortPage;
   /** Which surface made the decision. Free text; used to group the ledger. */
   surface: string;
   /** How many times it happened in this occurrence. */
@@ -286,7 +297,7 @@ function rowsFor(position: number, perRow: number): number {
 export interface RankMoveInput {
   id: string;
   eventId: string | null;
-  page: StorefrontPage;
+  page: EffortPage;
   surface: string;
   /** What moved, named the way the shopper would name it. */
   subject: string;
@@ -334,7 +345,7 @@ export function rankMove(input: RankMoveInput): EffortEntry | null {
 export interface SimpleSavingInput {
   id: string;
   eventId: string | null;
-  page: StorefrontPage;
+  page: EffortPage;
   surface: string;
   kind: EffortKind;
   count: number;

@@ -22,7 +22,7 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Product } from '../../types';
 import { TestTube2, Sparkles, Sliders, ArrowDown } from 'lucide-react';
-import { runSimilarityEngine, runComplementEngine } from '../../ml/engine';
+import { SURFACE_POLICIES, applySuppression, inertContext, runComplementEngine, runSimilarityEngine } from '../../ml/engine';
 import { ProductCard } from '../storefront/ProductCard';
 import { TeamCrest } from '../brand/Identity';
 
@@ -36,10 +36,20 @@ interface Scored {
 }
 
 export const RecommendationLab: React.FC = () => {
-  const { products, setSelectedProduct, setStorefrontPage } = useApp();
+  const { products, setSelectedProduct, setStorefrontPage, suppressionCtx } = useApp();
 
   const [anchorId, setAnchorId] = useState<string>(products[0]?.id ?? '');
   const [engine, setEngine] = useState<Engine>('complement');
+  /**
+   * The gate, switchable.
+   *
+   * Suppression is the one stage here whose value is only visible by removing
+   * it. Every other control makes the list shorter in a way you can reason
+   * about from the score; this one removes things that scored WELL, for reasons
+   * that live outside the score entirely. A viewer who cannot toggle it has to
+   * take on trust that anything was removed at all.
+   */
+  const [suppressionOn, setSuppressionOn] = useState(true);
   const [recCount, setRecCount] = useState<number>(4);
   // 0.25 rather than 0.5. Complement scores are conditional probabilities on a
   // display scale, and their distribution is one strong pair well clear of a
@@ -59,7 +69,15 @@ export const RecommendationLab: React.FC = () => {
    */
   const run = useMemo(() => {
     if (!anchorProduct) {
-      return { pool: 0, rejected: [] as { product: Product; reason: string }[], scored: [] as Scored[], kept: [] as Scored[], cut: [] as Scored[] };
+      return {
+        pool: 0,
+        rejected: [] as { product: Product; reason: string }[],
+        scored: [] as Scored[],
+        above: [] as Scored[],
+        kept: [] as Scored[],
+        cut: [] as Scored[],
+        gate: applySuppression([], inertContext(), SURFACE_POLICIES.pdp_similar),
+      };
     }
 
     const rejected: { product: Product; reason: string }[] = [];
@@ -118,11 +136,56 @@ export const RecommendationLab: React.FC = () => {
             note: r.relationshipType,
           }));
 
-    const kept = scored.filter((s) => s.score >= minConfidence).slice(0, recCount);
+    const above = scored.filter((s) => s.score >= minConfidence);
     const cut = scored.filter((s) => s.score < minConfidence);
 
-    return { pool: candidates.length, rejected, scored, kept, cut };
-  }, [anchorProduct, products, engine, recCount, minConfidence, strictTeamConstraint, inStockOnly]);
+    /*
+     * The suppression gate, run on the Lab's OWN policy rather than on one of
+     * the storefront's.
+     *
+     * `leadThreshold` and `tailThreshold` are both the slider's value, which
+     * flattens the per-slot ramp to nothing. That is deliberate: the slider is
+     * this screen's confidence control, and a surface policy that quietly
+     * imposed a second, different threshold would make the funnel's arithmetic
+     * stop adding up - which is the one thing this screen may not do. What is
+     * left is exactly the three rules that have nothing to do with the score:
+     * ownership, rivalry, fatigue.
+     */
+    const gate = applySuppression(
+      above.map((s) => ({ product: s.product, confidence: s.score, source: engine })),
+      suppressionOn ? suppressionCtx : inertContext(),
+      {
+        id: 'lab',
+        label: 'Lab bench',
+        page: 'pdp',
+        slots: recCount,
+        leadThreshold: minConfidence,
+        tailThreshold: minConfidence,
+        // The bench's scale is whichever engine the dropdown is on, and the
+        // slider is read in those terms - which is why its range is the range
+        // of the engine, not a fixed 0..1.
+        scale: engine === 'similarity' ? ('similarity' as const) : ('complement' as const),
+        rationale:
+          'The bench uses one flat threshold - the slider above - so the only candidates removed here are the ones removed by a rule rather than by a score.',
+      },
+      { anchor: anchorProduct }
+    );
+
+    const byId = new Map(above.map((s) => [s.product.id, s]));
+    const kept = gate.kept.map((c) => byId.get(c.product.id)!).filter(Boolean);
+
+    return { pool: candidates.length, rejected, scored, above, kept, cut, gate };
+  }, [
+    anchorProduct,
+    products,
+    engine,
+    recCount,
+    minConfidence,
+    strictTeamConstraint,
+    inStockOnly,
+    suppressionOn,
+    suppressionCtx,
+  ]);
 
   /** The baseline this is being compared against: no model, just sales volume. */
   const genericResults = useMemo(
@@ -196,8 +259,8 @@ export const RecommendationLab: React.FC = () => {
             onChange={(e) => setEngine(e.target.value as Engine)}
             className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg p-2 font-medium focus:outline-hidden focus:border-red-500"
           >
-            <option value="complement">Complement — cross-sell, complete the look</option>
-            <option value="similarity">Similarity — substitutes, you may also like</option>
+            <option value="complement">Complement: cross-sell, complete the look</option>
+            <option value="similarity">Similarity: substitutes, you may also like</option>
           </select>
           <p className="text-[10px] text-slate-400 mt-1">
             {engine === 'complement'
@@ -231,7 +294,7 @@ export const RecommendationLab: React.FC = () => {
         <div className="space-y-3">
           <div>
             <label className="block font-bold text-slate-800 mb-1">
-              4 · Confidence gate — <span className="font-mono">{minConfidence.toFixed(2)}</span>
+              4 · Confidence gate · <span className="font-mono">{minConfidence.toFixed(2)}</span>
             </label>
             <input
               type="range"
@@ -245,7 +308,7 @@ export const RecommendationLab: React.FC = () => {
           </div>
           <div>
             <label className="block font-bold text-slate-800 mb-1">
-              5 · Results returned — <span className="font-mono">{recCount}</span>
+              5 · Results returned · <span className="font-mono">{recCount}</span>
             </label>
             <input
               type="range"
@@ -281,8 +344,57 @@ export const RecommendationLab: React.FC = () => {
             tone="amber"
             note={`${run.cut.length} of ${run.scored.length} scored below ${minConfidence.toFixed(2)}`}
           />
+          <Stage
+            label="After suppression"
+            value={run.gate.unsuppressed.length - run.gate.suppressed.length}
+            tone={run.gate.fired ? 'rose' : 'slate'}
+            note={
+              suppressionOn
+                ? run.gate.fired
+                  ? `${run.gate.suppressed.length} removed by rule, not by score`
+                  : 'No rule fired on this pool'
+                : 'Gate switched off'
+            }
+          />
           <Stage label="Returned" value={run.kept.length} tone="emerald" note={`Top ${recCount} of what survived`} />
         </div>
+
+        {/* The toggle belongs beside the funnel, not up in the control block:
+            it is the only control here whose effect you read by comparing two
+            states of this diagram. */}
+        <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-700 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={suppressionOn}
+            onChange={(e) => setSuppressionOn(e.target.checked)}
+            className="h-3.5 w-3.5 accent-rose-600"
+          />
+          Apply the suppression gate
+          <span className="font-normal text-slate-500">
+            : ownership, rivalry and fatigue rules. Untick it to see what they were removing.
+          </span>
+        </label>
+
+        {/* What the RULES rejected, kept visually distinct from what the score
+            rejected. They are different kinds of refusal: one is the model
+            saying "not sure", the other is the store saying "not this, ever". */}
+        {run.gate.fired && (
+          <div className="bg-rose-950 text-rose-100 p-3 rounded-xl text-[11px] space-y-1 font-mono">
+            <div className="font-bold text-rose-300 flex items-center gap-1.5">
+              <ArrowDown className="h-3 w-3" />
+              Scored well, refused anyway
+            </div>
+            {run.gate.suppressed.slice(0, 5).map((d) => (
+              <div key={d.product.id} className="text-rose-200/80 flex justify-between gap-3">
+                <span className="truncate">{d.product.name}</span>
+                <span className="text-rose-400 shrink-0">{d.ruleLabel}</span>
+              </div>
+            ))}
+            <div className="text-rose-300/60 pt-1 font-sans text-[10px] leading-snug">
+              {run.gate.suppressed[0]?.reason}
+            </div>
+          </div>
+        )}
 
         {/* What the gate rejected. This is the part that makes the slider
             legible: without it, raising the threshold just shortens a list. */}
@@ -303,7 +415,7 @@ export const RecommendationLab: React.FC = () => {
 
         {run.kept.length === 0 && (
           <div className="bg-rose-50 border border-rose-200 text-rose-900 rounded-xl p-3 text-xs">
-            Nothing cleared the gate at {minConfidence.toFixed(2)}. That is a real outcome rather than an error — in
+            Nothing cleared the gate at {minConfidence.toFixed(2)}. That is a real outcome rather than an error. In
             production this is where a rail is suppressed instead of filled with weak matches. Lower the threshold or
             relax a constraint.
           </div>
@@ -364,7 +476,7 @@ export const RecommendationLab: React.FC = () => {
         </div>
         <div className="text-slate-600 mt-0.5">
           {overlapCount === 0
-            ? 'None of the returned items are simply the catalog bestsellers, so the ranking is coming from the anchor rather than from sales volume. Whether that is better is what the Model Evidence screen measures — this screen only shows that it is different.'
+            ? 'None of the returned items are simply the catalog bestsellers, so the ranking is coming from the anchor rather than from sales volume. Whether that is better is what the Model Evidence screen measures. This screen only shows that it is different.'
             : 'Some of the returned items are also global bestsellers. That is expected: a popular product is popular partly because it goes with things.'}
         </div>
       </div>
@@ -376,6 +488,9 @@ const TONE = {
   slate: 'bg-slate-50 border-slate-200 text-slate-900',
   amber: 'bg-amber-50 border-amber-200 text-amber-900',
   emerald: 'bg-emerald-50 border-emerald-200 text-emerald-900',
+  // Refusal reads red everywhere else in this build, and the funnel is not the
+  // place to invent a second visual language for it.
+  rose: 'bg-rose-50 border-rose-200 text-rose-900',
 } as const;
 
 const Stage: React.FC<{ label: string; value: number; note: string; tone: keyof typeof TONE }> = ({
